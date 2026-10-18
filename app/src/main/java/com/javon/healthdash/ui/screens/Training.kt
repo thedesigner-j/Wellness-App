@@ -14,6 +14,7 @@ import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.remember
 import androidx.compose.runtime.rememberCoroutineScope
 import androidx.compose.runtime.setValue
+import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.graphics.vector.ImageVector
 import androidx.compose.ui.text.input.KeyboardType
@@ -40,6 +41,13 @@ import com.javon.healthdash.data.db.PlannedEntity
 import com.javon.healthdash.data.db.WorkoutEntity
 import com.javon.healthdash.data.done
 import com.javon.healthdash.data.label
+import com.javon.healthdash.calc.DoneActivity
+import com.javon.healthdash.calc.Phase
+import com.javon.healthdash.calc.PlanProgress
+import com.javon.healthdash.calc.ProgressSession
+import com.javon.healthdash.ui.components.PlanHeroCard
+import com.javon.healthdash.ui.components.ProgressLine
+import com.javon.healthdash.ui.components.WeekStrip
 import com.javon.healthdash.data.sportOf
 import com.javon.healthdash.data.toSession
 import com.javon.healthdash.domain.DashboardState
@@ -246,8 +254,72 @@ fun TrainingScreen(
         }
     }
 
+    val progress = nextPlan?.let { plan ->
+        val sessions = data.planned.filter { it.planId == plan.id }.map {
+            ProgressSession(it.id, LocalDate.ofEpochDay(it.date), Sport.valueOf(it.sport), WorkoutKind.valueOf(it.kind), it.durationMin, it.distanceMi, it.week, Phase.valueOf(it.phase), it.status)
+        }
+        if (sessions.isEmpty()) null else PlanProgress.compute(
+            sessions,
+            state.workouts.map { DoneActivity(localDateOf(it.startMs, zone), sportOf(it.exerciseType), ((it.endMs - it.startMs) / MINUTE_MS).toInt(), it.distanceM?.div(com.javon.healthdash.calc.METERS_PER_MI)) },
+            today, LocalDate.ofEpochDay(plan.startDate), LocalDate.ofEpochDay(plan.raceDate),
+        )
+    }
+
     ScreenFrame(topBar = { LargeTopBar("Training", overline) }, bottomBar = { BottomNav(Tab.Training) { onTab(it) } }) {
         HealthPermissionNotice(container)
+        val unit = if (progress?.sport == Sport.Ride) "ride" else "run"
+        if (progress != null && nextPlan != null) {
+            if (LocalDate.ofEpochDay(nextPlan.startDate).isAfter(today)) Notice(NoticeType.Info, "Plan starts ${Fmt.dayShort(LocalDate.ofEpochDay(nextPlan.startDate).atStartOfDay(zone).toInstant().toEpochMilli())}", "Your ${nextPlan.label()} plan hasn't started yet.")
+            PlanHeroCard(progress, nextPlan.label(), Fmt.dayShort(LocalDate.ofEpochDay(nextPlan.raceDate).atStartOfDay(zone).toInstant().toEpochMilli())) { onPlans() }
+
+            AppCard {
+                Row(Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.SpaceBetween, verticalAlignment = Alignment.CenterVertically) {
+                    Text("This week", style = Theme.type.labelL, color = Theme.colors.textPrimary)
+                    Text("Week plan", style = Theme.type.labelM, color = Theme.colors.textAccent, modifier = Modifier.clickable { onWeek(PlanBuilder.monday(today)) })
+                }
+                WeekStrip(progress.thisWeek) { dayOpen = it.date }
+                ProgressLine("Sessions", "${progress.weekSessionsDone} of ${progress.weekSessions}", if (progress.weekSessions == 0) 0.0 else progress.weekSessionsDone.toDouble() / progress.weekSessions)
+                if (progress.weekPlannedMi > 0) ProgressLine("Miles", "${Fmt.one(progress.weekDoneMi)} of ${Fmt.one(progress.weekPlannedMi)} mi", progress.weekDoneMi / progress.weekPlannedMi)
+            }
+        }
+
+        val todaySessions = data.planned.filter { it.date == today.toEpochDay() }
+        SectionHeader("Today · ${Fmt.dayShort(state.nowMs)}", if (data.plans.isEmpty() || progress != null) null else "Week plan") { onWeek(PlanBuilder.monday(today)) }
+        data.adjustments.firstOrNull { a -> a.kind == "Swapped" && !a.reverted && todaySessions.any { it.id == a.sessionId } }?.let { a ->
+            Notice(NoticeType.Gentle, a.summary, a.reason + ". Hard sessions after poor recovery are swapped for easy.", action = "Keep original plan", onAction = { scope.launch { container.training.undoSwap(a) } })
+        }
+        when {
+            data.plans.isEmpty() -> EmptyState("No race plan yet", "Create a plan for any run or ride distance. It's built by fixed rules from your recent training.")
+            todaySessions.isEmpty() -> AppCard { Text("Rest day — nothing planned today.", style = Theme.type.bodyM, color = Theme.colors.textSecondary) }
+            else -> todaySessions.forEach { e -> WorkoutCard(sessionTitle(e), sessionDetail(e, zones), e.note, sessionStatus(e, state, zone), sportIcon(Sport.valueOf(e.sport))) }
+        }
+
+        if (progress != null) {
+            progress.nextKey?.takeIf { it.date.isAfter(today) }?.let { k ->
+                data.planned.firstOrNull { it.id == k.id }?.let { e ->
+                    SectionHeader("Next key workout · ${Fmt.dayShort(k.date.atStartOfDay(zone).toInstant().toEpochMilli())}")
+                    WorkoutCard(sessionTitle(e), sessionDetail(e, zones), e.note, sessionStatus(e, state, zone), sportIcon(Sport.valueOf(e.sport)))
+                }
+            }
+            SectionHeader("Progress")
+            MetricTiles(
+                listOfNotNull(
+                    "Sessions done" to "${progress.doneSoFar}/${progress.dueSoFar}",
+                    "Last 14 days" to if (progress.due14 == 0) "—" else "${progress.done14 * 100 / progress.due14}%",
+                    "Last long $unit" to (progress.lastLong?.let { (s, d) -> d.distanceMi?.let { "${Fmt.one(it)} mi" } ?: "${d.durationMin} min" } ?: "—"),
+                ),
+            )
+            progress.lastLong?.let { (s, d) ->
+                val planned = s.distanceMi
+                if (planned != null && d.distanceMi != null) Caption("Last long $unit: ${Fmt.one(d.distanceMi!!)} of ${Fmt.one(planned)} mi planned · ${Fmt.dayShort(s.date.atStartOfDay(zone).toInstant().toEpochMilli())}")
+            }
+            val from = (progress.weekIndex - 5).coerceAtLeast(0)
+            val shown = progress.weeks.filter { it.week in from..(progress.weekIndex + 2) }
+            WeeklyBars(
+                "Weekly miles · plan vs done", planned = shown.map { it.plannedMi.toInt() }, done = shown.map { if (it.week > progress.weekIndex) null else it.doneMi.toInt() },
+                labels = shown.map { if (it.week == progress.weekIndex) "Now" else "W${it.week + 1}" },
+            )
+        }
         CalendarMonth(
             month, today,
             stateOf = { d ->
@@ -262,16 +334,6 @@ fun TrainingScreen(
             onPrev = { month = month.minusMonths(1) }, onNext = { month = month.plusMonths(1) }, onDay = { dayOpen = it },
         )
 
-        val todaySessions = data.planned.filter { it.date == today.toEpochDay() }
-        SectionHeader("Today · ${Fmt.dayShort(state.nowMs)}", if (data.plans.isEmpty()) null else "Week plan") { onWeek(PlanBuilder.monday(today)) }
-        data.adjustments.firstOrNull { a -> a.kind == "Swapped" && !a.reverted && todaySessions.any { it.id == a.sessionId } }?.let { a ->
-            Notice(NoticeType.Gentle, a.summary, a.reason + ". Hard sessions after poor recovery are swapped for easy.", action = "Keep original plan", onAction = { scope.launch { container.training.undoSwap(a) } })
-        }
-        when {
-            data.plans.isEmpty() -> EmptyState("No race plan yet", "Create a plan for your marathon, 80-mile ride or 200-mile relay. It's built by fixed rules from your recent training.")
-            todaySessions.isEmpty() -> AppCard { Text("Rest day — nothing planned today.", style = Theme.type.bodyM, color = Theme.colors.textSecondary) }
-            else -> todaySessions.forEach { e -> WorkoutCard(sessionTitle(e), sessionDetail(e, zones), e.note, sessionStatus(e, state, zone), sportIcon(Sport.valueOf(e.sport))) }
-        }
         RowGroup {
             ListRow("Race plans", subtitle = if (data.plans.isEmpty()) "Create your first plan" else "${data.plans.size} plan${if (data.plans.size == 1) "" else "s"} in sequence", icon = AppIcons.calendar, onClick = onPlans)
             ListRow("Plan adjustments", subtitle = "${data.adjustments.size} rule-based changes", icon = AppIcons.sync, onClick = onAdjustments)
@@ -281,7 +343,7 @@ fun TrainingScreen(
         val weeks = (-5..2).map { thisWeek.plusWeeks(it.toLong()) }
         val doneByWeek = Completion.weeklyMinutes(done, zone)
         val plannedByWeek = data.planned.filter { it.sport != Sport.Strength.name }.groupBy { PlanBuilder.monday(LocalDate.ofEpochDay(it.date)) }.mapValues { (_, l) -> l.sumOf { it.durationMin } }
-        WeeklyBars(
+        if (progress == null) WeeklyBars(
             "Weekly endurance minutes",
             planned = weeks.map { plannedByWeek[it] }, done = weeks.map { if (it.isAfter(thisWeek)) null else doneByWeek[it] ?: 0 },
             labels = weeks.map { if (it == thisWeek) "Now" else "${it.monthValue}/${it.dayOfMonth}" },
