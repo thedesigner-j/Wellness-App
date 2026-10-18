@@ -206,7 +206,7 @@ fun PlanBuilderScreen(container: AppContainer, state: DashboardState, onClose: (
     }
     val fitness = run {
         val w = weeklyMi.toDoubleOrNull(); val l = longestMi.toDoubleOrNull(); val p = parsePace(easyPace)
-        if (w != null && l != null && p != null && l > 0) RunFitness(w, l, p, garminFit?.runs ?: 0, garminFit?.days ?: 30) else null
+        if (w != null && l != null && p != null && l >= 0) RunFitness(w, l, p, garminFit?.runs ?: 0, garminFit?.days ?: 30) else null
     }
     var days by remember { mutableStateOf(setOf(DayOfWeek.TUESDAY, DayOfWeek.WEDNESDAY, DayOfWeek.THURSDAY, DayOfWeek.SATURDAY, DayOfWeek.SUNDAY)) }
     var longDay by remember { mutableStateOf(DayOfWeek.SATURDAY) }
@@ -293,19 +293,23 @@ fun PlanBuilderScreen(container: AppContainer, state: DashboardState, onClose: (
                     AppCard {
                         Row(Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.SpaceBetween) {
                             Text("Your running now", style = Theme.type.labelL, color = Theme.colors.textPrimary)
-                            Tag(if (auto) "From Garmin · ${garminFit!!.runs} runs" else "Manual", TagType.Derived)
+                            Tag(if (auto) "From Garmin · ${garminFit!!.runs} runs" + (if (garminFit.rides > 0) " · ${garminFit.rides} rides" else "") else "Manual", TagType.Derived)
                         }
                         if (auto) {
                             // Pulled automatically from the last 30 days of runs: average week, longest run, typical pace.
                             MetricTiles(
                                 listOf(
-                                    "Weekly mileage" to "${weeklyMi} mi",
+                                    "Weekly base" to "${weeklyMi} mi",
                                     "Longest run" to "${longestMi} mi",
                                     "Typical pace" to "${easyPace}/mi",
                                 ),
                             )
                             Text(
-                                "Averaged from ${garminFit!!.runs} ${if (garminFit.runs == 1) "run" else "runs"} over the last ${garminFit.days} days. Typical pace is your median run pace — the plan sets your easy runs around it and your workouts from your goal time.",
+                                buildString {
+                                    append("Averaged over the last ${garminFit!!.days} days: ${Fmt.one(garminFit.runMilesPerWeek)} mi/week running")
+                                    if (garminFit.rides > 0) append(" + ${Fmt.one(garminFit.rideCreditMi)} mi run-equivalent from ${garminFit.rides} rides (${Fmt.int(garminFit.rideMinPerWeek)} min/week × 40%)")
+                                    append(". Typical pace is your median run pace${if (garminFit.runs == 0) " (no runs yet — 11:00 assumed)" else ""}; workouts are paced from your goal time.")
+                                },
                                 style = Theme.type.bodyS, color = Theme.colors.textSecondary,
                             )
                             Text("Adjust", style = Theme.type.labelM, color = Theme.colors.textAccent, modifier = Modifier.clickable { fitEdited = true }.padding(vertical = Dimens.spacingXs))

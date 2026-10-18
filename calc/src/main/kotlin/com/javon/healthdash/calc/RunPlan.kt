@@ -22,34 +22,64 @@ data class RunSample(val timeMs: Long, val distanceMi: Double, val durationSec: 
     val paceSec get() = durationSec / distanceMi
 }
 
+/** One completed ride (cross-training toward running fitness). */
+data class RideSample(val timeMs: Long, val durationSec: Int, val distanceMi: Double?)
+
 /** Where the runner is today: the plan starts from this. */
 data class RunFitness(
+    /** Weekly base the plan starts from: run miles + ride credit. */
     val weeklyMiles: Double,
     val longestRunMi: Double,
     /** Typical easy pace, seconds per mile. */
     val easyPaceSec: Int,
     val runs: Int,
     val days: Int,
+    val runMilesPerWeek: Double = weeklyMiles,
+    val rides: Int = 0,
+    val rideMinPerWeek: Double = 0.0,
+    /** Run-equivalent miles per week credited from rides. */
+    val rideCreditMi: Double = 0.0,
 )
 
 object Fitness {
+    /** Share of ride time that counts as running time for aerobic base (cycling is lower-impact, less specific). */
+    const val RIDE_TO_RUN_TIME = 0.4
+    const val DEFAULT_EASY_PACE_SEC = 660 // 11:00/mi when there are no runs to measure
+
     /**
-     * Last [days] days of runs → weekly miles, longest run and typical (median) pace. Weekly miles are
-     * scaled to the days of history that exist ([historyDays]) so a new connection isn't averaged down.
+     * Last [days] days of runs and rides → weekly base, longest run and typical (median) run pace.
+     * Weekly numbers are scaled to the days of history that exist ([historyDays]) so a new
+     * connection isn't averaged down.
+     *
+     * Ride credit (run-equivalent miles) = ride minutes × 0.4 ÷ easy pace, capped at
+     * max(run miles, 10) per week — rides build the engine but not running durability.
      */
-    fun fromRuns(runs: List<RunSample>, nowMs: Long, days: Int = 30, historyDays: Int = days): RunFitness? {
-        val recent = runs.filter { it.timeMs >= nowMs - days * DAY_MS && it.distanceMi >= 1.0 && it.durationSec > 0 }
-        if (recent.isEmpty()) return null
+    fun fromActivities(runs: List<RunSample>, rides: List<RideSample>, nowMs: Long, days: Int = 30, historyDays: Int = days): RunFitness? {
+        val from = nowMs - days * DAY_MS
+        val recentRuns = runs.filter { it.timeMs >= from && it.distanceMi >= 1.0 && it.durationSec > 0 }
+        val recentRides = rides.filter { it.timeMs >= from && it.durationSec >= 10 * 60 }
+        if (recentRuns.isEmpty() && recentRides.isEmpty()) return null
         val span = historyDays.coerceIn(7, days)
-        val paces = recent.map { it.paceSec }.sorted()
+        val paces = recentRuns.map { it.paceSec }.sorted()
+        val easy = if (paces.isEmpty()) DEFAULT_EASY_PACE_SEC else paces[paces.size / 2].roundToInt()
+        val runMi = recentRuns.sumOf { it.distanceMi } * 7.0 / span
+        val rideMin = recentRides.sumOf { it.durationSec } / 60.0 * 7.0 / span
+        val credit = min(rideMin * RIDE_TO_RUN_TIME * 60 / easy, max(runMi, 10.0))
         return RunFitness(
-            weeklyMiles = recent.sumOf { it.distanceMi } * 7.0 / span,
-            longestRunMi = recent.maxOf { it.distanceMi },
-            easyPaceSec = paces[paces.size / 2].roundToInt(),
-            runs = recent.size,
+            weeklyMiles = runMi + credit,
+            longestRunMi = recentRuns.maxOfOrNull { it.distanceMi } ?: 0.0,
+            easyPaceSec = easy,
+            runs = recentRuns.size,
             days = span,
+            runMilesPerWeek = runMi,
+            rides = recentRides.size,
+            rideMinPerWeek = rideMin,
+            rideCreditMi = credit,
         )
     }
+
+    fun fromRuns(runs: List<RunSample>, nowMs: Long, days: Int = 30, historyDays: Int = days): RunFitness? =
+        fromActivities(runs, emptyList(), nowMs, days, historyDays)?.takeIf { it.runs > 0 }
 }
 
 /** Training paces in seconds per mile; ranges are (fast, slow). */
@@ -195,11 +225,13 @@ object RunPlanBuilder {
             val wkStart = first.plusWeeks(w.toLong())
             fun date(d: DayOfWeek) = wkStart.plusDays((d.value - 1).toLong())
             val sessions = mutableListOf<PlannedSession>()
-            fun run(d: DayOfWeek, kind: WorkoutKind, miles: Double, sec: Int, detail: String, name: String? = null) {
+            /** Adds a run and returns the miles actually scheduled (0 if the day is before the plan starts). */
+            fun run(d: DayOfWeek, kind: WorkoutKind, miles: Double, sec: Int, detail: String, name: String? = null): Double {
                 val dt = date(d)
-                if (dt.isBefore(inputs.startDate)) return
+                if (dt.isBefore(inputs.startDate)) return 0.0
                 val min = (sec / 60.0).roundToInt()
                 sessions += PlannedSession(dt, Sport.Run, kind, min, fuel.note(min, kind.intensity), name, r1(miles), detail)
+                return r1(miles)
             }
             fun easyRun(d: DayOfWeek, miles: Double, kind: WorkoutKind = WorkoutKind.Easy) {
                 val p = if (kind == WorkoutKind.Recovery) paces.recovery else paces.easy
@@ -239,10 +271,9 @@ object RunPlanBuilder {
             val mp = if (mpWeek) min(mpFinish, longMi - 4) else 0.0
             val longPace = (paces.long.first + paces.long.last) / 2
             val longSec = ((longMi - mp) * longPace + mp * paces.race).roundToInt()
-            run(longDay, WorkoutKind.Long, longMi, longSec,
+            used += run(longDay, WorkoutKind.Long, longMi, longSec,
                 if (mp > 0) "${r1(longMi)} mi · first ${r1(longMi - mp)} @ ${PaceMath.fmtRange(paces.long)}/mi, last ${r1(mp)} @ ${PaceMath.fmt(paces.race)}/mi (goal pace)"
                 else "${r1(longMi)} mi @ ${PaceMath.fmtRange(paces.long)}/mi · conversational")
-            used += longMi
 
             val hardCount = when (phase) { Phase.Base -> 1; Phase.Build, Phase.Peak -> if (lighter) 1 else 2; else -> 1 } - hardClubDays.size
             val hard = PlanBuilder.hardDays(free - longDay, longDay, hardCount.coerceAtLeast(0), hardClubDays)
@@ -255,15 +286,14 @@ object RunPlanBuilder {
                     val t = r1((target * 0.18 - warm - cool).coerceIn(2.0, 6.0)).let { if (phase == Phase.Taper) min(it, 3.0) else it }
                     val miles = warm + t + cool
                     val sec = ((warm + cool) * paces.easy.last + t * paces.tempo).roundToInt()
-                    run(d, WorkoutKind.Tempo, miles, sec, "${warm} mi easy · ${r1(t)} mi @ ${PaceMath.fmt(paces.tempo)}/mi (tempo) · ${cool} mi easy")
+                    used += run(d, WorkoutKind.Tempo, miles, sec, "${warm} mi easy · ${r1(t)} mi @ ${PaceMath.fmt(paces.tempo)}/mi (tempo) · ${cool} mi easy")
                 } else {
                     // Each rep: 800 m fast + 400 m jog = 0.75 mi.
                     val reps = ((target * 0.16 - warm - cool) / 0.75).roundToInt().coerceIn(4, 8)
                     val miles = warm + cool + reps * 0.75
                     val sec = ((warm + cool + reps * 0.25) * paces.easy.last + reps * 0.5 * paces.interval).roundToInt()
-                    run(d, WorkoutKind.Intervals, miles, sec, "${warm} mi easy · ${reps} × 800 m @ ${PaceMath.fmt(paces.interval)}/mi with 400 m jog · ${cool} mi easy")
+                    used += run(d, WorkoutKind.Intervals, miles, sec, "${warm} mi easy · ${reps} × 800 m @ ${PaceMath.fmt(paces.interval)}/mi with 400 m jog · ${cool} mi easy")
                 }
-                used += sessions.last().distanceMi ?: 0.0
             }
 
             var easyDays = (free - longDay - hard.toSet()).sortedBy { it.value }
@@ -271,13 +301,11 @@ object RunPlanBuilder {
                 val next = longDay.plus(1)
                 if (next in easyDays) {
                     val b2b = r1(longMi * 0.6)
-                    run(next, WorkoutKind.BackToBack, b2b, (b2b * paces.long.last).roundToInt(), "${b2b} mi on tired legs @ ${PaceMath.fmtRange(paces.long)}/mi — relay practice")
-                    used += b2b
+                    used += run(next, WorkoutKind.BackToBack, b2b, (b2b * paces.long.last).roundToInt(), "${b2b} mi on tired legs @ ${PaceMath.fmtRange(paces.long)}/mi — relay practice")
                     easyDays = easyDays - next
                 }
                 easyDays.firstOrNull()?.let { d ->
-                    run(d, WorkoutKind.DoubleDay, 8.0, 8 * paces.easy.last, "Double: 4 mi AM + 4 mi PM easy — relay practice")
-                    used += 8.0
+                    used += run(d, WorkoutKind.DoubleDay, 8.0, 8 * paces.easy.last, "Double: 4 mi AM + 4 mi PM easy — relay practice")
                     easyDays = easyDays - d
                 }
             }

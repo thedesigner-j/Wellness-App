@@ -97,6 +97,42 @@ class RunPlanTest {
         assertThat(build().second!!.warnings).isEmpty()
     }
 
+    @Test fun planStartingMidWeekDoesNotCrash() {
+        // Created on a Sunday: the rest of that week is already past.
+        val sunday = LocalDate.of(2026, 10, 18)
+        val (r, s) = build(inputs.copy(startDate = sunday, raceDate = LocalDate.of(2027, 2, 7)))
+        val weeks = (r as PlanResult.Ok).weeks
+        assertThat(weeks.first().sessions.all { !it.date.isBefore(sunday) }).isTrue()
+        assertThat(s!!.peakLongMi).isEqualTo(20.0)
+    }
+
+    @Test fun ridesAddRunEquivalentMiles() {
+        val now = 30 * DAY_MS
+        val runs = listOf(RunSample(now - DAY_MS, 5.0, 3000), RunSample(now - 3 * DAY_MS, 5.0, 3000))
+        val rides = listOf(RideSample(now - 2 * DAY_MS, 90 * 60, 22.0), RideSample(now - 4 * DAY_MS, 90 * 60, 21.0))
+        val f = Fitness.fromActivities(runs, rides, now, historyDays = 7)!!
+        // Runs: 10 mi/week. Rides: 180 min/week × 0.4 = 72 run-min ÷ 10:00/mi = 7.2 mi.
+        assertThat(f.runMilesPerWeek).isWithin(1e-9).of(10.0)
+        assertThat(f.rideCreditMi).isWithin(1e-9).of(7.2)
+        assertThat(f.weeklyMiles).isWithin(1e-9).of(17.2)
+        assertThat(f.longestRunMi).isEqualTo(5.0) // rides don't count toward the long run
+        assertThat(f.rides).isEqualTo(2)
+    }
+
+    @Test fun rideCreditIsCapped() {
+        val now = 30 * DAY_MS
+        val runs = listOf(RunSample(now - DAY_MS, 4.0, 2400))
+        val rides = (1..6).map { RideSample(now - it * DAY_MS / 2, 120 * 60, null) }
+        val f = Fitness.fromActivities(runs, rides, now, historyDays = 7)!!
+        // 720 min × 0.4 = 288 run-min ÷ 10:00 = 28.8 mi, capped at max(4, 10) = 10.
+        assertThat(f.rideCreditMi).isWithin(1e-9).of(10.0)
+        // Rides only: easy pace defaults to 11:00/mi, still capped at 10.
+        val ridesOnly = Fitness.fromActivities(emptyList(), rides, now, historyDays = 7)!!
+        assertThat(ridesOnly.runs).isEqualTo(0)
+        assertThat(ridesOnly.weeklyMiles).isWithin(1e-9).of(10.0)
+        assertThat(Fitness.fromRuns(emptyList(), now)).isNull()
+    }
+
     @Test fun runClubCountsInMileage() {
         val club = FixedSession(WEDNESDAY, Sport.Run, "Run club", 6.0, 55, Intensity.Hard)
         val weeks = (build(inputs.copy(fixed = listOf(club))).first as PlanResult.Ok).weeks

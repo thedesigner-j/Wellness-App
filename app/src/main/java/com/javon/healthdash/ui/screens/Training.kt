@@ -158,7 +158,9 @@ fun runFitness(s: DashboardState): com.javon.healthdash.calc.RunFitness? {
         .map { com.javon.healthdash.calc.RunSample(it.startMs, it.distanceM!! / com.javon.healthdash.calc.METERS_PER_MI, ((it.endMs - it.startMs) / 1000).toInt()) }
     val firstData = listOfNotNull(s.workouts.minOfOrNull { it.startMs }, s.steps.minOfOrNull { it.startMs }).minOrNull() ?: s.nowMs
     val historyDays = ((s.nowMs - firstData) / (24 * 3_600_000L)).toInt()
-    return com.javon.healthdash.calc.Fitness.fromRuns(runs, s.nowMs, 30, historyDays)
+    val rides = s.workouts.filter { sportOf(it.exerciseType) == Sport.Ride }
+        .map { com.javon.healthdash.calc.RideSample(it.startMs, ((it.endMs - it.startMs) / 1000).toInt(), it.distanceM?.div(com.javon.healthdash.calc.METERS_PER_MI)) }
+    return com.javon.healthdash.calc.Fitness.fromActivities(runs, rides, s.nowMs, 30, historyDays)
 }
 
 /** "9:45" → 585 seconds. */
