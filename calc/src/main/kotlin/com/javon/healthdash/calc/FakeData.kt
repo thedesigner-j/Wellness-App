@@ -22,6 +22,11 @@ data class FakeDataset(
     val meals: List<FakeMeal>,
     val weightsLb: List<Pair<Long, Double>>,
     val bodyFatPct: List<Pair<Long, Double>>,
+    val sleep: List<SleepSession> = emptyList(),
+    val hrvMs: List<Reading> = emptyList(),
+    val restingHr: List<Reading> = emptyList(),
+    /** Lab A1c results (time, %). */
+    val labA1c: List<Pair<Long, Double>> = emptyList(),
 )
 
 object FakeData {
@@ -87,10 +92,30 @@ object FakeData {
             g += rnd.nextDouble(-2.5, 2.5)
             // Sensor gap on one day to exercise the "not enough data" paths.
             val dayIndex = ((t - start) / DAY_MS).toInt()
+            // Slow improvement over the period so the GMI line trends toward the goal.
+            g += (days - 1 - dayIndex) * 0.08
             val gap = dayIndex == days - 5 && hour in 9.0..21.0
             if (!gap) glucose += GlucosePoint(t, g)
             t += 5 * MINUTE_MS
         }
-        return FakeDataset(glucose, steps, workouts, meals, weights, fats)
+        // Separate generator so adding these does not change the glucose/meal sequence above.
+        val r2 = Random(seed + 1)
+        val sleep = mutableListOf<SleepSession>()
+        val hrv = mutableListOf<Reading>()
+        val rhr = mutableListOf<Reading>()
+        for (d in 0 until days) {
+            val day = start + d * DAY_MS
+            val bed = day - ((1.4 + r2.nextDouble(0.0, 1.2)) * HOUR_MS).toLong()
+            val wake = day + ((5.3 + r2.nextDouble(0.0, 0.6)) * HOUR_MS).toLong()
+            if (wake > nowMs) break
+            val minutes = (wake - bed) / MINUTE_MS
+            sleep += SleepSession(TimeWindow(bed, wake), deepMin = (minutes * r2.nextDouble(0.14, 0.2)).toInt())
+            val rested = wake - bed >= 7 * HOUR_MS
+            hrv += Reading(wake + 5 * MINUTE_MS, (if (rested) 58.0 else 47.0) + r2.nextDouble(-5.0, 5.0))
+            rhr += Reading(wake + 5 * MINUTE_MS, (if (rested) 46.0 else 50.0) + r2.nextDouble(-2.0, 2.0))
+        }
+        val labs = listOf(start + 3 * DAY_MS + 9 * HOUR_MS to 6.1, start + (days - 4) * DAY_MS + 9 * HOUR_MS to 5.8)
+            .filter { it.first <= nowMs }
+        return FakeDataset(glucose, steps, workouts, meals, weights, fats, sleep, hrv, rhr, labs)
     }
 }

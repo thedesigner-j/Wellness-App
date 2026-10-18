@@ -4,6 +4,9 @@ import com.javon.healthdash.calc.FakeData
 import com.javon.healthdash.data.db.AppDao
 import com.javon.healthdash.data.db.BodyEntity
 import com.javon.healthdash.data.db.GlucoseEntity
+import com.javon.healthdash.data.db.LabEntity
+import com.javon.healthdash.data.db.ReadingEntity
+import com.javon.healthdash.data.db.SleepEntity
 import com.javon.healthdash.data.db.MealEntity
 import com.javon.healthdash.data.db.MealItemEntity
 import com.javon.healthdash.data.db.StepsEntity
@@ -14,7 +17,11 @@ class SampleData(private val dao: AppDao) {
 
     suspend fun load(nowMs: Long = System.currentTimeMillis()) {
         clear()
-        val d = FakeData.generate(nowMs)
+        val d = FakeData.generate(nowMs, days = 90)
+        dao.upsertSleep(d.sleep.mapIndexed { i, s -> SleepEntity("sample-sl-$i", s.window.startMs, s.window.endMs, s.deepMin, SOURCE) })
+        dao.upsertReadings(d.hrvMs.mapIndexed { i, r -> ReadingEntity("sample-hrv-$i", r.timeMs, ReadingEntity.HRV, r.value, SOURCE) })
+        dao.upsertReadings(d.restingHr.mapIndexed { i, r -> ReadingEntity("sample-rhr-$i", r.timeMs, ReadingEntity.RESTING_HR, r.value, SOURCE) })
+        d.labA1c.forEach { (t, v) -> dao.insertLab(LabEntity(timeMs = t, kind = LabEntity.A1C, value = v, lab = "Sample lab", sample = true)) }
         dao.upsertGlucose(d.glucose.map { GlucoseEntity("sample-g-${it.timeMs}", it.timeMs, it.mgdl, SOURCE) })
         dao.upsertSteps(d.steps.mapIndexed { i, s -> StepsEntity("sample-s-$i", s.startMs, s.endMs, s.count, SOURCE) })
         dao.upsertWorkouts(d.workouts.mapIndexed { i, w -> WorkoutEntity("sample-w-$i", w.window.startMs, w.window.endMs, 56, w.title, SOURCE) })
@@ -36,6 +43,7 @@ class SampleData(private val dao: AppDao) {
 
     suspend fun clear() {
         dao.clearSampleGlucose(); dao.clearSampleSteps(); dao.clearSampleWorkouts(); dao.clearSampleBody(); dao.clearSampleMeals()
+        dao.clearSampleSleep(); dao.clearSampleReadings(); dao.clearSampleLabs()
     }
 
     companion object {

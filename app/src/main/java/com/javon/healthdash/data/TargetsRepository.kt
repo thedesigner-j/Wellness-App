@@ -18,6 +18,12 @@ class TargetsRepository(private val dao: AppDao) {
         TargetDef("veryHigh", "High threshold", "mg/dL", 180.0, "Glucose"),
         TargetDef("tirGoal", "Time in range goal", "%", 85.0, "Glucose"),
         TargetDef("a1cGoal", "A1c / GMI goal", "%", 5.7, "Glucose"),
+        TargetDef("cvGoal", "Variability (CV) goal", "% max", 20.0, "Glucose"),
+        TargetDef("lowGoal", "Time below 70 goal", "% max", 4.0, "Glucose"),
+        TargetDef("fastingGoal", "Fasting glucose goal", "mg/dL max", 100.0, "Glucose"),
+        TargetDef("fastingStart", "Fasting window start", "hour (24 h)", 5.0, "Windows"),
+        TargetDef("fastingEnd", "Fasting window end", "hour (24 h)", 7.0, "Windows"),
+        TargetDef("goodSleepHours", "Good sleep", "hours min", 7.0, "Windows"),
         TargetDef("trainingAfterMin", "Training window after workout", "min", 60.0, "Windows"),
         TargetDef("baselineMin", "Meal baseline", "min before", 15.0, "Windows"),
         TargetDef("minCoveragePct", "Data sufficiency", "% coverage", 70.0, "Detection"),
@@ -47,6 +53,9 @@ class TargetsRepository(private val dao: AppDao) {
             walkSteps = (v["walkSteps"] ?: 1000.0).toLong(),
             walkWindowMin = (v["walkWindowMin"] ?: 45.0).toInt(),
             unloggedRiseMgdl = v["unloggedRise"] ?: 30.0,
+            fastingStartMin = ((v["fastingStart"] ?: 5.0) * 60).toInt(),
+            fastingEndMin = ((v["fastingEnd"] ?: 7.0) * 60).toInt(),
+            goodSleepMin = ((v["goodSleepHours"] ?: 7.0) * 60).toInt(),
         )
     }
 }

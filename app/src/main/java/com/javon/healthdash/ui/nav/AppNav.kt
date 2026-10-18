@@ -18,7 +18,11 @@ import androidx.navigation.navArgument
 import com.javon.healthdash.AppContainer
 import com.javon.healthdash.domain.DashboardState
 import com.javon.healthdash.ui.components.Tab
-import com.javon.healthdash.ui.screens.A1cPlaceholderScreen
+import com.javon.healthdash.domain.TrendMetric
+import com.javon.healthdash.ui.screens.A1cScreen
+import com.javon.healthdash.ui.screens.DayContextScreen
+import com.javon.healthdash.ui.screens.MetricDetailScreen
+import com.javon.healthdash.ui.screens.TrendsScreen
 import com.javon.healthdash.ui.screens.ApiKeysScreen
 import com.javon.healthdash.ui.screens.DataSourcesScreen
 import com.javon.healthdash.ui.screens.FoodDetailScreen
@@ -59,6 +63,12 @@ object Routes {
     const val SOURCES = "settings/sources"
     const val KEYS = "settings/keys"
     const val TARGETS = "settings/targets"
+    const val TRENDS = "trends"
+    const val METRIC = "trends/{metric}/{days}"
+    const val DAY = "day/{epochDay}"
+
+    fun metric(m: TrendMetric, days: Int) = "trends/${m.name}/$days"
+    fun day(d: java.time.LocalDate) = "day/${d.toEpochDay()}"
 
     fun meal(id: Long) = "meal/$id"
     fun food(key: String) = "food/${android.net.Uri.encode(key)}"
@@ -101,9 +111,18 @@ fun AppNav(container: AppContainer) {
         composable(Routes.TODAY) {
             TodayScreen(state, onTab, onSync = dash::sync, onLogMeal = startLog, onMeal = { nav.navigate(Routes.meal(it)) }, onSources = { nav.navigate(Routes.SOURCES) })
         }
-        composable(Routes.A1C) { A1cPlaceholderScreen(state, onTab) }
+        composable(Routes.A1C) { A1cScreen(container, state, onTab, onFastingDetail = { nav.navigate(Routes.metric(TrendMetric.Fasting, 90)) }) }
+        composable(Routes.TRENDS) {
+            TrendsScreen(state, onTab, onBack = back, onMetric = { m, d -> nav.navigate(Routes.metric(m, d)) }, onDay = { nav.navigate(Routes.day(it)) })
+        }
+        composable(Routes.METRIC, arguments = listOf(navArgument("metric") { type = NavType.StringType }, navArgument("days") { type = NavType.IntType })) { e ->
+            MetricDetailScreen(state, TrendMetric.valueOf(e.arguments!!.getString("metric")!!), e.arguments!!.getInt("days"), onBack = back)
+        }
+        composable(Routes.DAY, arguments = listOf(navArgument("epochDay") { type = NavType.LongType })) { e ->
+            DayContextScreen(state, java.time.LocalDate.ofEpochDay(e.arguments!!.getLong("epochDay")), onBack = back, onMeal = { nav.navigate(Routes.meal(it)) })
+        }
         composable(Routes.TRAINING) { TrainingPlaceholderScreen(state, onTab) }
-        composable(Routes.MORE) { MoreScreen(onTab, onSettings = { nav.navigate(Routes.SETTINGS) }, onSources = { nav.navigate(Routes.SOURCES) }) }
+        composable(Routes.MORE) { MoreScreen(onTab, onSettings = { nav.navigate(Routes.SETTINGS) }, onSources = { nav.navigate(Routes.SOURCES) }, onTrends = { nav.navigate(Routes.TRENDS) }) }
         composable(Routes.MEALS, arguments = listOf(navArgument("tab") { type = NavType.IntType; defaultValue = 0 })) { entry ->
             MealsScreen(
                 state, initialTab = entry.arguments?.getInt("tab") ?: 0, onTab = onTab, onLogMeal = startLog,

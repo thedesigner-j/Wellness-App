@@ -98,6 +98,35 @@ data class SyncStateEntity(
     val error: String?,
 )
 
+@Entity(tableName = "sleep", indices = [Index("endMs")])
+data class SleepEntity(@PrimaryKey val id: String, val startMs: Long, val endMs: Long, val deepMin: Int?, val source: String)
+
+/** Point readings from Health Connect: HRV (ms), resting HR (bpm), VO2 max (ml/kg/min). */
+@Entity(tableName = "readings", indices = [Index("kind", "timeMs")])
+data class ReadingEntity(@PrimaryKey val id: String, val timeMs: Long, val kind: String, val value: Double, val source: String) {
+    companion object {
+        const val HRV = "hrv_ms"
+        const val RESTING_HR = "resting_hr"
+        const val VO2_MAX = "vo2_max"
+    }
+}
+
+/** Manually entered lab results (SPEC §4). */
+@Entity(tableName = "labs", indices = [Index("timeMs")])
+data class LabEntity(
+    @PrimaryKey(autoGenerate = true) val id: Long = 0,
+    val timeMs: Long,
+    val kind: String,
+    val value: Double,
+    val lab: String?,
+    val sample: Boolean = false,
+) {
+    companion object {
+        const val A1C = "a1c"
+        const val FASTING = "fasting_glucose"
+    }
+}
+
 data class MealWithItems(
     @androidx.room.Embedded val meal: MealEntity,
     @androidx.room.Relation(parentColumn = "id", entityColumn = "mealId") val items: List<MealItemEntity>,
@@ -166,15 +195,36 @@ interface AppDao {
     @Query("DELETE FROM workouts WHERE source = 'sample'") suspend fun clearSampleWorkouts()
     @Query("DELETE FROM body WHERE source = 'sample'") suspend fun clearSampleBody()
     @Query("DELETE FROM meals WHERE sample = 1") suspend fun clearSampleMeals()
+
+    @Upsert suspend fun upsertSleep(rows: List<SleepEntity>)
+    @Upsert suspend fun upsertReadings(rows: List<ReadingEntity>)
+    @Insert suspend fun insertLab(row: LabEntity): Long
+    @Query("DELETE FROM labs WHERE id = :id") suspend fun deleteLab(id: Long)
+
+    @Query("SELECT * FROM sleep WHERE endMs >= :from ORDER BY startMs")
+    fun sleep(from: Long): Flow<List<SleepEntity>>
+
+    @Query("SELECT * FROM readings WHERE timeMs >= :from ORDER BY timeMs")
+    fun readings(from: Long): Flow<List<ReadingEntity>>
+
+    @Query("SELECT * FROM labs ORDER BY timeMs DESC")
+    fun labs(): Flow<List<LabEntity>>
+
+    @Query("DELETE FROM sleep WHERE source = 'sample'") suspend fun clearSampleSleep()
+    @Query("DELETE FROM readings WHERE source = 'sample'") suspend fun clearSampleReadings()
+    @Query("DELETE FROM labs WHERE sample = 1") suspend fun clearSampleLabs()
 }
 
 @Database(
     entities = [
         GlucoseEntity::class, StepsEntity::class, WorkoutEntity::class, BodyEntity::class,
         MealEntity::class, MealItemEntity::class, AiResultEntity::class, TargetEntity::class, SyncStateEntity::class,
+        SleepEntity::class, ReadingEntity::class, LabEntity::class,
     ],
-    version = 1,
+    version = 2,
     exportSchema = true,
+    // v2 only adds tables, so Room migrates automatically and Phase 1 data is kept.
+    autoMigrations = [androidx.room.AutoMigration(from = 1, to = 2)],
 )
 abstract class AppDatabase : RoomDatabase() {
     abstract fun dao(): AppDao

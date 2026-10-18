@@ -19,6 +19,8 @@ import androidx.health.connect.client.time.TimeRangeFilter
 import com.javon.healthdash.data.db.AppDao
 import com.javon.healthdash.data.db.BodyEntity
 import com.javon.healthdash.data.db.GlucoseEntity
+import com.javon.healthdash.data.db.ReadingEntity
+import com.javon.healthdash.data.db.SleepEntity
 import com.javon.healthdash.data.db.StepsEntity
 import com.javon.healthdash.data.db.SyncStateEntity
 import com.javon.healthdash.data.db.WorkoutEntity
@@ -27,7 +29,10 @@ import java.time.Instant
 import kotlin.reflect.KClass
 
 /** The data types shown on the Data sources screen. */
-enum class DataType(val label: String) { Glucose("Blood glucose"), Steps("Steps"), Workouts("Workouts"), Weight("Weight"), BodyFat("Body fat") }
+enum class DataType(val label: String) {
+    Glucose("Blood glucose"), Steps("Steps"), Workouts("Workouts"), Sleep("Sleep"), Hrv("Heart rate variability"),
+    RestingHr("Resting heart rate"), Vo2Max("VO2 max"), Weight("Weight"), BodyFat("Body fat"),
+}
 
 /**
  * Read-only access to Health Connect. Each sync re-reads the last few days so late-arriving CGM
@@ -113,6 +118,32 @@ class HealthConnectSource(private val context: Context, private val dao: AppDao)
             val rows = readAll(ExerciseSessionRecord::class, start, now)
             dao.upsertWorkouts(rows.map { WorkoutEntity(it.metadata.id, it.startTime.toEpochMilli(), it.endTime.toEpochMilli(), it.exerciseType, it.title, it.metadata.dataOrigin.packageName) })
             Triple(rows.count { it.endTime.toEpochMilli() >= dayAgo }, rows.maxOfOrNull { it.endTime.toEpochMilli() }, rows.map { it.metadata.dataOrigin.packageName }.toSet())
+        }
+        step<SleepSessionRecord>(DataType.Sleep) {
+            val rows = readAll(SleepSessionRecord::class, start.minus(Duration.ofHours(12)), now)
+            dao.upsertSleep(
+                rows.map { r ->
+                    val deep = r.stages.filter { it.stage == SleepSessionRecord.STAGE_TYPE_DEEP }
+                        .sumOf { Duration.between(it.startTime, it.endTime).toMinutes() }.toInt()
+                    SleepEntity(r.metadata.id, r.startTime.toEpochMilli(), r.endTime.toEpochMilli(), deep.takeIf { r.stages.isNotEmpty() }, r.metadata.dataOrigin.packageName)
+                },
+            )
+            Triple(rows.count { it.endTime.toEpochMilli() >= dayAgo }, rows.maxOfOrNull { it.endTime.toEpochMilli() }, rows.map { it.metadata.dataOrigin.packageName }.toSet())
+        }
+        step<HeartRateVariabilityRmssdRecord>(DataType.Hrv) {
+            val rows = readAll(HeartRateVariabilityRmssdRecord::class, start, now)
+            dao.upsertReadings(rows.map { ReadingEntity(it.metadata.id, it.time.toEpochMilli(), ReadingEntity.HRV, it.heartRateVariabilityMillis, it.metadata.dataOrigin.packageName) })
+            Triple(rows.count { it.time.toEpochMilli() >= dayAgo }, rows.maxOfOrNull { it.time.toEpochMilli() }, rows.map { it.metadata.dataOrigin.packageName }.toSet())
+        }
+        step<RestingHeartRateRecord>(DataType.RestingHr) {
+            val rows = readAll(RestingHeartRateRecord::class, start, now)
+            dao.upsertReadings(rows.map { ReadingEntity(it.metadata.id, it.time.toEpochMilli(), ReadingEntity.RESTING_HR, it.beatsPerMinute.toDouble(), it.metadata.dataOrigin.packageName) })
+            Triple(rows.count { it.time.toEpochMilli() >= dayAgo }, rows.maxOfOrNull { it.time.toEpochMilli() }, rows.map { it.metadata.dataOrigin.packageName }.toSet())
+        }
+        step<Vo2MaxRecord>(DataType.Vo2Max) {
+            val rows = readAll(Vo2MaxRecord::class, now.minus(Duration.ofDays(maxOf(days, 30))), now)
+            dao.upsertReadings(rows.map { ReadingEntity(it.metadata.id, it.time.toEpochMilli(), ReadingEntity.VO2_MAX, it.vo2MillilitersPerMinuteKilogram, it.metadata.dataOrigin.packageName) })
+            Triple(rows.count { it.time.toEpochMilli() >= dayAgo }, rows.maxOfOrNull { it.time.toEpochMilli() }, rows.map { it.metadata.dataOrigin.packageName }.toSet())
         }
         step<WeightRecord>(DataType.Weight) {
             val rows = readAll(WeightRecord::class, now.minus(Duration.ofDays(maxOf(days, 14))), now)

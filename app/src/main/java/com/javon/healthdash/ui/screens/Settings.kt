@@ -74,11 +74,11 @@ fun SourceRows(state: DashboardState) {
 }
 
 @Composable
-fun MoreScreen(onTab: (Tab) -> Unit, onSettings: () -> Unit, onSources: () -> Unit) {
+fun MoreScreen(onTab: (Tab) -> Unit, onSettings: () -> Unit, onSources: () -> Unit, onTrends: () -> Unit) {
     ScreenFrame(topBar = { LargeTopBar("More", "Galaxy S26 Ultra") }, bottomBar = { BottomNav(Tab.More) { onTab(it) } }) {
         RowGroup {
+            ListRow("Trends", subtitle = "Every metric vs target · sleep & HRV context", icon = AppIcons.trends, onClick = onTrends)
             ListRow("Body", subtitle = "Weight, body fat, lean mass · Phase 4", icon = AppIcons.strength, chevron = false)
-            ListRow("Trends", subtitle = "Every metric vs target · Phase 2", icon = AppIcons.trends, chevron = false)
             ListRow("Weekly summary", subtitle = "Phase 4", icon = AppIcons.calendar, chevron = false)
             ListRow("Doctor report", subtitle = "One-tap PDF · Phase 4", icon = AppIcons.document, chevron = false)
         }
@@ -208,25 +208,6 @@ fun TargetsScreen(container: AppContainer, state: DashboardState, onBack: () -> 
             }
         }
         Caption("Every calculation reads these values. Changes apply immediately.")
-    }
-}
-
-/** A1c tab — full screen arrives in Phase 2; Phase 1 shows the 14-day GMI the app already computes. */
-@Composable
-fun A1cPlaceholderScreen(state: DashboardState, onTab: (Tab) -> Unit) {
-    val g = state.gmi14.valueOrNull()
-    ScreenFrame(topBar = { LargeTopBar("A1c Progress", "Goal · below ${state.targetValues["a1cGoal"] ?: 5.7}%") }, bottomBar = { BottomNav(Tab.A1c) { onTab(it) } }) {
-        AppCard {
-            Text("14-day GMI · estimated A1c", style = Theme.type.labelM, color = Theme.colors.textSecondary)
-            Text(g?.let { Fmt.two(it.gmi) + "%" } ?: "—", style = Theme.type.displayGlucose, color = Theme.colors.textPrimary)
-            if (g != null) {
-                MetricTiles(listOf("Mean" to "${g.mean.toInt()}", "Tight range" to "${g.pctTight.toInt()}%", "CV" to "${g.cv.toInt()}%"))
-            } else {
-                Caption("Not enough data — 14-day coverage is ${Fmt.int((state.gmi14 as com.javon.healthdash.calc.Metric.NotEnoughData).coverage * 100)}%.")
-            }
-        }
-        EmptyState("Coming in Phase 2", "90-day GMI trend, lab A1c entry and comparison, and fasting glucose.")
-        Caption("Personal tool, not medical advice. Discuss these results with your doctor.")
     }
 }
 

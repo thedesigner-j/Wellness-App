@@ -26,7 +26,10 @@ import com.javon.healthdash.calc.UnloggedRise
 import com.javon.healthdash.calc.WalkComparison
 import com.javon.healthdash.calc.WalkEffect
 import com.javon.healthdash.calc.foodKeyOf
+import com.javon.healthdash.calc.Reading
+import com.javon.healthdash.calc.SleepSession
 import com.javon.healthdash.data.db.BodyEntity
+import com.javon.healthdash.data.db.LabEntity
 import com.javon.healthdash.data.db.MealItemEntity
 import com.javon.healthdash.data.db.MealWithItems
 import com.javon.healthdash.data.db.SyncStateEntity
@@ -74,6 +77,11 @@ data class DashboardState(
     val bodyFatSource: String? = null,
     val unlogged: UnloggedRise? = null,
     val syncStates: List<SyncStateEntity> = emptyList(),
+    val sleep: List<SleepSession> = emptyList(),
+    val hrv: List<Reading> = emptyList(),
+    val restingHr: List<Reading> = emptyList(),
+    val vo2: List<Reading> = emptyList(),
+    val labs: List<LabEntity> = emptyList(),
 ) {
     val workoutWindows get() = workouts.map { TimeWindow(it.startMs, it.endMs) }
     fun meal(id: Long) = meals.firstOrNull { it.id == id }

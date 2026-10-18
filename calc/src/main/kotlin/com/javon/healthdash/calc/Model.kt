@@ -44,6 +44,14 @@ data class Targets(
     val unloggedMealLookbackMin: Int = 30,
     val minRankInstances: Int = 2,
     val minForecastInstances: Int = 2,
+    /** Fasting window, minutes after local midnight (default 5:00–7:00). */
+    val fastingStartMin: Int = 5 * 60,
+    val fastingEndMin: Int = 7 * 60,
+    /** Default overnight window when the watch recorded no sleep (22:30–6:00). */
+    val overnightStartMin: Int = 22 * 60 + 30,
+    val overnightEndMin: Int = 6 * 60,
+    /** A night at or above this is a "good sleep" night. */
+    val goodSleepMin: Int = 7 * 60,
 )
 
 /** A value that is only shown when enough data backs it (SPEC §5, §12). */

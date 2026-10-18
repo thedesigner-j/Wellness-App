@@ -3,7 +3,11 @@ package com.javon.healthdash
 import android.content.Context
 import com.javon.healthdash.calc.GlucosePoint
 import com.javon.healthdash.calc.HOUR_MS
+import com.javon.healthdash.calc.Reading
+import com.javon.healthdash.calc.SleepSession
 import com.javon.healthdash.calc.StepInterval
+import com.javon.healthdash.calc.TimeWindow
+import com.javon.healthdash.data.db.ReadingEntity
 import com.javon.healthdash.data.HealthConnectSource
 import com.javon.healthdash.data.Photos
 import com.javon.healthdash.data.Prefs
@@ -64,7 +68,10 @@ class AppContainer(context: Context) {
         val workouts = dao.workouts(from, now + HOUR_MS)
         val body = combine(dao.recentBody(BodyEntity.WEIGHT), dao.recentBody(BodyEntity.BODY_FAT)) { w, f -> w to f }
         val meta = combine(targets.values, dao.syncStates()) { t, s -> t to s }
-        combine(glucose, steps, workouts, dao.meals(), combine(body, meta) { b, m -> b to m }) { g, s, w, meals, (bodyPair, metaPair) ->
+        val context = combine(dao.sleep(from), dao.readings(from), dao.labs()) { sl, rd, lb -> Triple(sl, rd, lb) }
+        combine(glucose, steps, workouts, dao.meals(), combine(body, meta, context) { b, m, cx -> Triple(b, m, cx) }) { g, s, w, meals, (bodyPair, metaPair, cx) ->
+            val (sl, rd, lb) = cx
+            fun kind(k: String) = rd.filter { it.kind == k }.map { Reading(it.timeMs, it.value) }
             Analysis.build(
                 nowMs = now,
                 zone = ZoneId.systemDefault(),
@@ -77,6 +84,12 @@ class AppContainer(context: Context) {
                 weights = bodyPair.first,
                 bodyFat = bodyPair.second,
                 syncStates = metaPair.second,
+            ).copy(
+                sleep = sl.map { SleepSession(TimeWindow(it.startMs, it.endMs), it.deepMin) },
+                hrv = kind(ReadingEntity.HRV),
+                restingHr = kind(ReadingEntity.RESTING_HR),
+                vo2 = kind(ReadingEntity.VO2_MAX),
+                labs = lb,
             )
         }
     }.flowOn(Dispatchers.Default)
