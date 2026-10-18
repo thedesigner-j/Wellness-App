@@ -39,6 +39,7 @@ import com.javon.healthdash.data.db.PlanEntity
 import com.javon.healthdash.data.db.PlannedEntity
 import com.javon.healthdash.data.db.WorkoutEntity
 import com.javon.healthdash.data.done
+import com.javon.healthdash.data.label
 import com.javon.healthdash.data.sportOf
 import com.javon.healthdash.data.toSession
 import com.javon.healthdash.domain.DashboardState
@@ -163,6 +164,15 @@ fun runFitness(s: DashboardState): com.javon.healthdash.calc.RunFitness? {
     return com.javon.healthdash.calc.Fitness.fromActivities(runs, rides, s.nowMs, 30, historyDays)
 }
 
+/** Last 30 days of Garmin rides with distance → weekly miles, longest ride, typical speed. */
+fun rideFitness(s: DashboardState): com.javon.healthdash.calc.RideFitness? {
+    val firstData = listOfNotNull(s.workouts.minOfOrNull { it.startMs }, s.steps.minOfOrNull { it.startMs }).minOrNull() ?: s.nowMs
+    val historyDays = ((s.nowMs - firstData) / (24 * 3_600_000L)).toInt()
+    val rides = s.workouts.filter { sportOf(it.exerciseType) == Sport.Ride }
+        .map { com.javon.healthdash.calc.RideSample(it.startMs, ((it.endMs - it.startMs) / 1000).toInt(), it.distanceM?.div(com.javon.healthdash.calc.METERS_PER_MI)) }
+    return com.javon.healthdash.calc.RideFitnessCalc.fromRides(rides, s.nowMs, 30, historyDays)
+}
+
 /** "9:45" → 585 seconds. */
 fun parsePace(text: String): Int? = text.trim().split(":").takeIf { it.size == 2 }?.let { (m, s) ->
     val mm = m.toIntOrNull(); val ss = s.toIntOrNull()
@@ -221,7 +231,7 @@ fun TrainingScreen(
     val nextPlan = data.plans.firstOrNull { !LocalDate.ofEpochDay(it.raceDate).isBefore(today) }
     val overline = nextPlan?.let {
         val race = LocalDate.ofEpochDay(it.raceDate)
-        "${com.javon.healthdash.calc.RaceType.valueOf(it.raceType).label} · ${Fmt.dayShort(race.atStartOfDay(zone).toInstant().toEpochMilli())} · ${ChronoUnit.WEEKS.between(today, race)} weeks out"
+        "${it.label()} · ${Fmt.dayShort(race.atStartOfDay(zone).toInstant().toEpochMilli())} · ${ChronoUnit.WEEKS.between(today, race)} weeks out"
     } ?: "No race plan yet"
 
     if (vo2Open) Vo2Sheet(onDismiss = { vo2Open = false }) { v -> scope.launch { container.training.addVo2(System.currentTimeMillis(), v); vo2Open = false } }

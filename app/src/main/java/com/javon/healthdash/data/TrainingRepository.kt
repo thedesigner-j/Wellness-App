@@ -43,7 +43,13 @@ fun PlanEntity.inputs() = PlanInputs(
     days = days.split(",").filter { it.isNotBlank() }.map { DayOfWeek.of(it.toInt()) }.toSet(),
     longDay = DayOfWeek.of(longDay),
     strengthDays = strengthDays.split(",").filter { it.isNotBlank() }.map { DayOfWeek.of(it.toInt()) }.toSet(),
+    distanceMi = distanceMi,
 )
+
+/** "Half marathon", or "8.0-mile race" for a custom distance. */
+fun PlanEntity.label(): String = RaceType.valueOf(raceType).let { t ->
+    if (t.custom && distanceMi != null) "${com.javon.healthdash.ui.Fmt.one(distanceMi)}-mile ${if (t.sport == Sport.Ride) "ride" else "race"}" else t.label
+}
 
 fun WorkoutEntity.done() = DoneWorkout(TimeWindow(startMs, endMs), sportOf(exerciseType))
 
@@ -62,7 +68,7 @@ class TrainingRepository(private val dao: AppDao) {
             PlanEntity(
                 raceType = inputs.race.name, raceDate = inputs.raceDate.toEpochDay(), startDate = inputs.startDate.toEpochDay(), goalMin = inputs.goalMin,
                 days = inputs.days.joinToString(",") { it.value.toString() }, longDay = inputs.longDay.value,
-                strengthDays = inputs.strengthDays.joinToString(",") { it.value.toString() }, weeklyMin = inputs.currentWeeklyMin, createdAt = System.currentTimeMillis(),
+                strengthDays = inputs.strengthDays.joinToString(",") { it.value.toString() }, weeklyMin = inputs.currentWeeklyMin, createdAt = System.currentTimeMillis(), distanceMi = inputs.distanceMi,
             ),
         )
         dao.insertPlanned(result.weeks.flatMap { w ->

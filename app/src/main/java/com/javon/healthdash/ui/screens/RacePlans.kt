@@ -47,6 +47,9 @@ import com.javon.healthdash.calc.PaceMath
 import com.javon.healthdash.calc.RaceType
 import com.javon.healthdash.calc.RunFitness
 import com.javon.healthdash.calc.RunPlanBuilder
+import com.javon.healthdash.calc.RideFitness
+import kotlin.math.roundToInt
+import com.javon.healthdash.calc.RidePlanBuilder
 import com.javon.healthdash.calc.RunRules
 import com.javon.healthdash.calc.Sport
 import com.javon.healthdash.calc.WorkoutKind
@@ -55,6 +58,7 @@ import com.javon.healthdash.calc.localDateOf
 import com.javon.healthdash.data.TargetsRepository
 import com.javon.healthdash.data.done
 import com.javon.healthdash.data.inputs
+import com.javon.healthdash.data.label
 import com.javon.healthdash.domain.DashboardState
 import com.javon.healthdash.ui.Fmt
 import com.javon.healthdash.ui.components.AppButton
@@ -108,7 +112,7 @@ fun RacePlansScreen(container: AppContainer, state: DashboardState, onBack: () -
     deleting?.let { p ->
         AlertDialog(
             onDismissRequest = { deleting = null },
-            title = { Text("Delete ${RaceType.valueOf(p.raceType).label} plan?") },
+            title = { Text("Delete ${p.label()} plan?") },
             text = { Text("All of its planned sessions and adjustments are removed. Completed workouts from Garmin are not affected.") },
             confirmButton = { TextButton({ scope.launch { container.training.deletePlan(p.id); deleting = null } }) { Text("Delete") } },
             dismissButton = { TextButton({ deleting = null }) { Text("Cancel") } },
@@ -137,10 +141,10 @@ fun RacePlansScreen(container: AppContainer, state: DashboardState, onBack: () -
                 horizontalArrangement = Arrangement.spacedBy(Dimens.spacingMd), verticalAlignment = Alignment.CenterVertically,
             ) {
                 Box(Modifier.size(40.dp).clip(Shapes.md).background(if (active) Theme.colors.bgAccent else Theme.colors.bgNeutral), contentAlignment = Alignment.Center) {
-                    Icon(AppIcons.run, null, tint = if (active) Theme.colors.textOnAccent else Theme.colors.iconPrimary, modifier = Modifier.size(20.dp))
+                    Icon(if (type.sport == Sport.Ride) AppIcons.bike else AppIcons.run, null, tint = if (active) Theme.colors.textOnAccent else Theme.colors.iconPrimary, modifier = Modifier.size(20.dp))
                 }
                 Column(Modifier.weight(1f), verticalArrangement = Arrangement.spacedBy(Dimens.spacingXxs)) {
-                    Text(type.label, style = Theme.type.headingH3, color = Theme.colors.textPrimary)
+                    Text(p.label(), style = Theme.type.headingH3, color = Theme.colors.textPrimary)
                     Text("${Fmt.dayShort(race.ms(zone))} · ${p.goalMin?.let { "Goal ${it / 60}:${"%02d".format(it % 60)}" } ?: "Finish"} · $weeks weeks", style = Theme.type.bodyS, color = Theme.colors.textSecondary)
                     Row(horizontalArrangement = Arrangement.spacedBy(Dimens.spacingMd)) {
                         Text("Week view", style = Theme.type.labelM, color = Theme.colors.textAccent, modifier = Modifier.padding(top = Dimens.spacingXs).clickable { onWeek(PlanBuilder.monday(current?.let { LocalDate.ofEpochDay(it.date) } ?: LocalDate.ofEpochDay(p.startDate))) })
@@ -185,8 +189,11 @@ fun PlanBuilderScreen(container: AppContainer, state: DashboardState, onClose: (
     var step by remember { mutableIntStateOf(1) }
     var race by remember { mutableStateOf(RaceType.Marathon) }
     var raceDate by remember { mutableStateOf(start.plusWeeks(16)) }
+    var customMi by remember { mutableStateOf("") }
     var timeGoal by remember { mutableStateOf(true) }
-    var goal by remember { mutableStateOf("3:45") }
+    var goalH by remember { mutableStateOf("4") }
+    var goalM by remember { mutableStateOf("00") }
+    fun setGoal(min: Int) { goalH = (min / 60).toString(); goalM = "%02d".format(min % 60) }
     var weekly by remember { mutableStateOf(recentWeeklyMinutes(state, zone).takeIf { it > 0 }?.toString() ?: "") }
     var weeklyEdited by remember { mutableStateOf(false) }
     // Fill from Garmin once the data has loaded, unless the user already typed a value.
@@ -214,10 +221,28 @@ fun PlanBuilderScreen(container: AppContainer, state: DashboardState, onClose: (
     var picking by remember { mutableStateOf(false) }
     var error by remember { mutableStateOf<String?>(null) }
 
-    val goalMin = if (!timeGoal) null else goal.split(":").let { p -> p.getOrNull(0)?.toIntOrNull()?.let { h -> h * 60 + (p.getOrNull(1)?.toIntOrNull() ?: 0) } }
+    // Current riding (ride plans): last 30 days of Garmin rides, editable.
+    var rideMi by remember { mutableStateOf("") }
+    var longestRide by remember { mutableStateOf("") }
+    var rideSpeed by remember { mutableStateOf("") }
+    var rideEdited by remember { mutableStateOf(false) }
+    val garminRide = rideFitness(state)
+    androidx.compose.runtime.LaunchedEffect(garminRide) {
+        if (!rideEdited && garminRide != null) { rideMi = Fmt.one(garminRide.weeklyMiles); longestRide = Fmt.one(garminRide.longestRideMi); rideSpeed = Fmt.one(garminRide.speedMph) }
+    }
+    val riding = run {
+        val w = rideMi.toDoubleOrNull(); val l = longestRide.toDoubleOrNull(); val sp = rideSpeed.toDoubleOrNull()
+        if (w != null && l != null && sp != null && l >= 0 && sp in 5.0..35.0) RideFitness(w, l, sp, garminRide?.rides ?: 0, garminRide?.days ?: 30) else null
+    }
+
+    val distanceMi = if (race.custom) customMi.toDoubleOrNull()?.takeIf { it > 0 && it <= 500 } else null
+    val distanceOk = !race.custom || distanceMi != null
+    val hh = goalH.trim().ifEmpty { "0" }.toIntOrNull(); val mm = goalM.trim().ifEmpty { "0" }.toIntOrNull()
+    val goalMin = if (!timeGoal) null else if (hh == null || mm == null || hh !in 0..99 || mm !in 0..59) null else (hh * 60 + mm).takeIf { it > 0 }
     val recurring by container.prefs.recurring.collectAsStateWithLifecycle()
     val fixedDays = recurring.map { DayOfWeek.of(it.day) }.toSet()
-    val inputs = PlanInputs(race, raceDate, start, goalMin, weekly.toIntOrNull() ?: 0, days + fixedDays, longDay, strength, recurring.map { it.toFixed() })
+    val inputs = PlanInputs(race, raceDate, start, goalMin, weekly.toIntOrNull() ?: 0, days + fixedDays, longDay, strength, recurring.map { it.toFixed() }, distanceMi = distanceMi)
+    val raceName = if (race.custom && distanceMi != null) "${Fmt.one(distanceMi)}-mile ${if (race.sport == Sport.Ride) "ride" else "race"}" else race.label
     val back: () -> Unit = { if (step > 1) step-- else onClose() }
 
     if (picking) {
@@ -231,10 +256,11 @@ fun PlanBuilderScreen(container: AppContainer, state: DashboardState, onClose: (
 
     val isRun = race.sport == Sport.Run
     val runPreview = if (step == 4 && isRun && fitness != null) RunPlanBuilder.generate(inputs, fitness, rules, RunRules(), fuel) else null
+    val ridePreview = if (step == 4 && !isRun && riding != null) RidePlanBuilder.generate(inputs, riding, rules, fuel) else null
     val preview = when {
         step != 4 -> null
         isRun -> runPreview?.first
-        else -> PlanBuilder.generate(inputs, rules, fuel)
+        else -> ridePreview?.first
     }
     ScreenFrame(
         topBar = { SmallTopBar(if (step == 4) "Review plan" else "New race plan", back, AppIcons.close, onClose) },
@@ -248,8 +274,8 @@ fun PlanBuilderScreen(container: AppContainer, state: DashboardState, onClose: (
                         }
                     }
                 }, Modifier.fillMaxWidth(), enabled = preview is PlanResult.Ok)
-                3 -> AppButton("Generate plan", { step = 4 }, Modifier.fillMaxWidth(), enabled = days.size >= 3 && if (isRun) fitness != null else (weekly.toIntOrNull() ?: 0) > 0)
-                else -> AppButton("Next", { step++ }, Modifier.fillMaxWidth(), enabled = step != 2 || !timeGoal || goalMin != null)
+                3 -> AppButton("Generate plan", { step = 4 }, Modifier.fillMaxWidth(), enabled = days.size >= 3 && if (isRun) fitness != null else riding != null)
+                else -> AppButton("Next", { step++ }, Modifier.fillMaxWidth(), enabled = if (step == 1) distanceOk else !timeGoal || goalMin != null)
             }
             if (step > 1) AppButton("Back", back, Modifier.fillMaxWidth(), style = ButtonStyle.Ghost)
         },
@@ -258,25 +284,52 @@ fun PlanBuilderScreen(container: AppContainer, state: DashboardState, onClose: (
         when (step) {
             1 -> {
                 Heading("What are you training for?", "The plan is generated by fixed rules — no AI.")
-                RaceType.entries.forEach { t ->
-                    FoodMatchRow(
-                        t.label,
-                        when (t) {
-                            RaceType.Marathon -> "Run · taper ${rules.taperWeeksMarathon} weeks"
-                            RaceType.Bike80 -> "Ride · taper ${rules.taperWeeksBike} weeks"
-                            RaceType.Relay200 -> "Repeated run legs · back-to-backs and double days · taper ${rules.taperWeeksRelay} weeks"
-                        },
-                        race == t,
-                    ) { race = t; goal = when (t) { RaceType.Marathon -> "3:45"; RaceType.Bike80 -> "4:45"; RaceType.Relay200 -> "3:00" } }
+                listOf(Sport.Run to "Running", Sport.Ride to "Cycling").forEach { (sport, title) ->
+                    SectionHeader(title)
+                    RaceType.entries.filter { it.sport == sport }.forEach { t ->
+                        val taper = rules.taperWeeks(t)
+                        FoodMatchRow(
+                            t.label,
+                            when {
+                                t.custom -> "Any distance you enter"
+                                t.relay -> "Repeated run legs · back-to-backs and double days · taper $taper weeks"
+                                else -> "${Fmt.one(t.defaultMi)} mi · taper $taper ${if (taper == 1) "week" else "weeks"}"
+                            },
+                            race == t,
+                        ) { race = t; setGoal(t.defaultRaceMin) }
+                        if (t.custom && race == t) AppTextField(
+                            "Race distance", customMi, { customMi = it }, suffix = "mi", keyboardType = KeyboardType.Decimal,
+                            placeholder = if (sport == Sport.Ride) "40" else "8",
+                            error = if (customMi.isNotBlank() && distanceMi == null) "Enter miles, e.g. ${if (sport == Sport.Ride) "40" else "8.5"}" else null,
+                            helper = "Kilometers? 10 km = 6.2 mi, 21.1 km = 13.1 mi",
+                        )
+                    }
                 }
-                chainedFrom?.let { Caption("Starts ${Fmt.dayShort(start.ms(zone))}, after the ${RaceType.valueOf(it.raceType).label.lowercase()} plus ${rules.recoveryWeeks} recovery weeks.") }
+                chainedFrom?.let { Caption("Starts ${Fmt.dayShort(start.ms(zone))}, after the ${it.label().lowercase()} plus ${rules.recoveryWeeks} recovery weeks.") }
             }
             2 -> {
                 Heading("Race date and goal")
                 RowGroup { ListRow("Race date", subtitle = "Plan starts ${Fmt.dayShort(start.ms(zone))}", trailing = Fmt.dayShort(raceDate.ms(zone)), icon = AppIcons.calendar, onClick = { picking = true }) }
                 Text("Goal", style = Theme.type.labelM, color = Theme.colors.textSecondary)
                 SegmentedControl(listOf("Finish", "Target time"), if (timeGoal) 1 else 0, { timeGoal = it == 1 })
-                if (timeGoal) AppTextField("Target time", goal, { goal = it }, suffix = "h:mm", helper = if (race == RaceType.Relay200) "Your total running time across legs" else null, error = if (goalMin == null) "Use h:mm, e.g. 3:45" else null)
+                if (timeGoal) {
+                    Row(Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.spacedBy(Dimens.spacingMd)) {
+                        AppTextField("Hours", goalH, { v -> goalH = v.filter { it.isDigit() }.take(2) }, Modifier.weight(1f), suffix = "h", keyboardType = KeyboardType.Number)
+                        AppTextField("Minutes", goalM, { v -> goalM = v.filter { it.isDigit() }.take(2) }, Modifier.weight(1f), suffix = "min", keyboardType = KeyboardType.Number,
+                            error = if (mm != null && mm > 59) "0–59" else null)
+                    }
+                    when {
+                        goalMin == null -> Caption("Enter a finish time above zero.")
+                        race.relay -> Caption("Your total running time across all legs.")
+                        else -> {
+                            val mi = distanceMi ?: race.defaultMi.takeIf { it > 0 }
+                            if (mi != null) Caption(
+                                if (isRun) "${raceName} in ${goalMin / 60} h ${goalMin % 60} min = ${PaceMath.fmt((goalMin * 60 / mi).roundToInt())}/mi average pace"
+                                else "${raceName} in ${goalMin / 60} h ${goalMin % 60} min = ${Fmt.one(mi / (goalMin / 60.0))} mph average speed",
+                            )
+                        }
+                    }
+                }
             }
             3 -> {
                 Heading("Volume and availability")
@@ -330,15 +383,31 @@ fun PlanBuilderScreen(container: AppContainer, state: DashboardState, onClose: (
                             AppButton("Import Garmin history", onImport, Modifier.fillMaxWidth(), style = ButtonStyle.Secondary, icon = AppIcons.document)
                         }
                     }
-                } else AppCard {
-                    Row(Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.SpaceBetween) {
-                        Text("Current weekly volume", style = Theme.type.labelL, color = Theme.colors.textPrimary)
-                        Tag(if (rv.workouts == 0) "Manual" else if (fromGarmin) "From Garmin" else "From Health Connect", TagType.Derived)
+                } else {
+                    HealthPermissionNotice(container)
+                    val auto = garminRide != null && !rideEdited
+                    AppCard {
+                        Row(Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.SpaceBetween) {
+                            Text("Your riding now", style = Theme.type.labelL, color = Theme.colors.textPrimary)
+                            Tag(if (auto) "From Garmin · ${garminRide!!.rides} rides" else "Manual", TagType.Derived)
+                        }
+                        if (auto) {
+                            MetricTiles(listOf("Weekly base" to "$rideMi mi", "Longest ride" to "$longestRide mi", "Typical speed" to "$rideSpeed mph"))
+                            Text("Averaged over the last ${garminRide!!.days} days of Garmin rides. Typical speed is your median ride speed; workouts are paced from your goal time.",
+                                style = Theme.type.bodyS, color = Theme.colors.textSecondary)
+                            Text("Adjust", style = Theme.type.labelM, color = Theme.colors.textAccent, modifier = Modifier.clickable { rideEdited = true }.padding(vertical = Dimens.spacingXs))
+                        } else {
+                            Text(if (garminRide == null) "No Garmin rides with distance in the last 30 days yet — enter your current riding." else "Edit to match a normal week.",
+                                style = Theme.type.bodyS, color = Theme.colors.textSecondary)
+                            AppTextField("Weekly miles", rideMi, { rideMi = it; rideEdited = true }, suffix = "mi", keyboardType = KeyboardType.Decimal)
+                            AppTextField("Longest ride, last 30 days", longestRide, { longestRide = it; rideEdited = true }, suffix = "mi", keyboardType = KeyboardType.Decimal)
+                            AppTextField("Typical speed", rideSpeed, { rideSpeed = it; rideEdited = true }, suffix = "mph", placeholder = "14", keyboardType = KeyboardType.Decimal,
+                                error = if (rideSpeed.isNotBlank() && (rideSpeed.toDoubleOrNull() ?: 0.0) !in 5.0..35.0) "Enter 5–35 mph" else null)
+                            if (garminRide != null) Text("Use Garmin numbers", style = Theme.type.labelM, color = Theme.colors.textAccent,
+                                modifier = Modifier.clickable { rideEdited = false; rideMi = Fmt.one(garminRide.weeklyMiles); longestRide = Fmt.one(garminRide.longestRideMi); rideSpeed = Fmt.one(garminRide.speedMph) }.padding(vertical = Dimens.spacingXs))
+                        }
+                        if (garminRide == null || garminRide.days < 21) Caption("Garmin only shares rides from the day it was connected to Health Connect.")
                     }
-                    AppTextField("Minutes per week", weekly, { weekly = it; weeklyEdited = true }, suffix = "min", keyboardType = KeyboardType.Number,
-                        helper = if (rv.workouts == 0) "No runs or rides in the last 28 days — enter your usual weekly training time."
-                        else "${rv.workouts} ${if (rv.workouts == 1) "workout" else "workouts"} over the last ${rv.days} days of data → ${rv.weeklyMin} min/week. Edit if needed.")
-                    if (rv.days < 21 && rv.workouts > 0) Caption("Based on only ${rv.days} days of Garmin history — check it matches a normal week.")
                 }
                 Text("Training days", style = Theme.type.labelM, color = Theme.colors.textSecondary)
                 FlowRow(horizontalArrangement = Arrangement.spacedBy(Dimens.spacingSm), verticalArrangement = Arrangement.spacedBy(Dimens.spacingSm)) {
@@ -354,7 +423,7 @@ fun PlanBuilderScreen(container: AppContainer, state: DashboardState, onClose: (
                 }
             }
             else -> {
-                Heading(race.label, "${Fmt.dayShort(raceDate.ms(zone))} · ${goalMin?.let { "goal ${it / 60}:${"%02d".format(it % 60)}" } ?: "finish"}")
+                Heading(raceName, "${Fmt.dayShort(raceDate.ms(zone))} · ${goalMin?.let { "goal ${it / 60}:${"%02d".format(it % 60)}" } ?: "finish"}")
                 error?.let { Notice(NoticeType.Info, "Couldn't create the plan", it) }
                 when (preview) {
                     is PlanResult.Invalid -> Notice(NoticeType.Info, "Adjust the inputs", preview.reason)
@@ -400,10 +469,41 @@ fun PlanBuilderScreen(container: AppContainer, state: DashboardState, onClose: (
                                     }
                                 }
                             }
-                        } else WeeklyBars(
-                            "Weekly ${if (race.sport == Sport.Ride) "riding" else "running"} minutes", planned = weeks.map { it.targetMin }, done = weeks.map { null },
-                            labels = weeks.map { if (it.index % 2 == 0) "W${it.index + 1}" else "" }, legendDone = "Done",
-                        )
+                        }
+                        val rideSummary = ridePreview?.second
+                        if (rideSummary != null) {
+                            rideSummary.warnings.forEach { Notice(NoticeType.Gentle, "Check this", it) }
+                            AppCard {
+                                Text("Your speeds · goal ${PaceMath.fmtTime(rideSummary.goalSec)}", style = Theme.type.labelL, color = Theme.colors.textPrimary)
+                                MetricTiles(
+                                    listOf(
+                                        "Goal average" to "${Fmt.one(rideSummary.speeds.race)} mph",
+                                        "Sweet spot" to "${Fmt.one(rideSummary.speeds.tempo)} mph",
+                                        "Endurance" to "${Fmt.one(rideSummary.speeds.endurance.start)}–${Fmt.one(rideSummary.speeds.endurance.endInclusive)}",
+                                    ),
+                                )
+                                Caption("From your goal time: long rides at 85–92% of goal speed, sweet spot at 105%. Wind and hills change speed — ride by effort.")
+                            }
+                            MetricTiles(
+                                listOf(
+                                    "Peak long ride" to "${Fmt.one(rideSummary.peakLongMi)} mi",
+                                    "Peak week" to "${Fmt.one(rideSummary.peakWeeklyMi)} mi",
+                                    "Starting week" to "${Fmt.one(RidePlanBuilder.weekMiles(weeks.first()))} mi",
+                                ),
+                            )
+                            WeeklyBars(
+                                "Weekly miles", planned = weeks.map { RidePlanBuilder.weekMiles(it).toInt() }, done = weeks.map { null },
+                                labels = weeks.map { if (it.index % 2 == 0) "W${it.index + 1}" else "" },
+                            )
+                            SectionHeader("Long rides")
+                            RowGroup {
+                                weeks.forEach { w ->
+                                    w.sessions.firstOrNull { it.kind == WorkoutKind.Long || it.kind == WorkoutKind.Race }?.let { s ->
+                                        ListRow("Week ${w.index + 1} · ${if (s.kind == WorkoutKind.Race) "Race" else w.phase.name}", subtitle = s.detail, trailing = "${Fmt.one(s.distanceMi ?: 0.0)} mi", chevron = false)
+                                    }
+                                }
+                            }
+                        }
                         SectionHeader("Rules applied")
                         val peak = weeks.maxOf { it.targetMin }
                         RowGroup {
@@ -413,7 +513,7 @@ fun PlanBuilderScreen(container: AppContainer, state: DashboardState, onClose: (
                                 "Long session cap" to "+${rules.longIncreaseMaxMin} min per week max",
                                 "Hard days separated" to "Never next to each other or the long day",
                                 "Strength ${rules.strengthPerWeek}× per week" to "Dropped in the final taper week",
-                                "Taper ${rules.taperWeeks(race)} weeks" to "Volume steps down before race week",
+                                "Taper ${rules.taperWeeks(race, inputs.raceMi)} weeks" to "Volume steps down before race week",
                             ).forEach { (t, s) -> ListRow(t, subtitle = s, icon = AppIcons.check, chevron = false) }
                         }
                     }

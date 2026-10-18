@@ -51,10 +51,40 @@ data class FixedSession(
 
 enum class Phase { Base, Build, Peak, Taper, Race, Recovery }
 
-enum class RaceType(val label: String, val sport: Sport, val peakWeeklyMin: Int, val longShare: Double, val defaultRaceMin: Int) {
-    Marathon("Marathon", Sport.Run, 480, 0.30, 240),
-    Bike80("80-mile bike race", Sport.Ride, 600, 0.40, 300),
-    Relay200("200-mile relay", Sport.Run, 420, 0.25, 180),
+/**
+ * Race catalog. [defaultMi] is the race distance (for the relay: your total leg miles);
+ * custom races take their distance from [PlanInputs.distanceMi]. Names are stored in the
+ * database, so existing entries must never be renamed.
+ */
+enum class RaceType(
+    val label: String,
+    val sport: Sport,
+    val defaultMi: Double,
+    val defaultGoalMin: Int,
+    val custom: Boolean = false,
+    val relay: Boolean = false,
+) {
+    FiveK("5K", Sport.Run, FIVE_K_MI, 28),
+    TenK("10K", Sport.Run, TEN_K_MI, 58),
+    FifteenK("15K", Sport.Run, 9.32057, 90),
+    TenMile("10 miles", Sport.Run, 10.0, 97),
+    Half("Half marathon", Sport.Run, HALF_MI, 120),
+    Marathon("Marathon", Sport.Run, MARATHON_MI, 240),
+    FiftyK("50K ultra", Sport.Run, 31.0686, 330),
+    FiftyMile("50-mile ultra", Sport.Run, 50.0, 660),
+    Relay200("200-mile relay", Sport.Run, 18.0, 180, relay = true),
+    CustomRun("Custom run distance", Sport.Run, 0.0, 0, custom = true),
+    Ride25("25-mile ride", Sport.Ride, 25.0, 100),
+    Ride50("50-mile ride", Sport.Ride, 50.0, 200),
+    MetricCentury("Metric century · 62 mi", Sport.Ride, 62.1371, 250),
+    Bike80("80-mile ride", Sport.Ride, 80.0, 330),
+    Century("Century · 100 mi", Sport.Ride, 100.0, 420),
+    CustomRide("Custom ride distance", Sport.Ride, 0.0, 0, custom = true);
+
+    // Time-based (minutes) builder parameters.
+    val peakWeeklyMin get() = if (sport == Sport.Ride) 600 else 480
+    val longShare get() = when { sport == Sport.Ride -> 0.40; relay -> 0.25; else -> 0.30 }
+    val defaultRaceMin get() = defaultGoalMin.takeIf { it > 0 } ?: 120
 }
 
 /** Every rule value is editable in Settings › Training rules. */
@@ -70,12 +100,17 @@ data class TrainingRules(
     val taperWeeksMarathon: Int = 3,
     val taperWeeksBike: Int = 2,
     val taperWeeksRelay: Int = 2,
+    val taperWeeksShort: Int = 1,
+    val taperWeeksHalf: Int = 2,
     val recoveryWeeks: Int = 2,
 ) {
-    fun taperWeeks(race: RaceType) = when (race) {
-        RaceType.Marathon -> taperWeeksMarathon
-        RaceType.Bike80 -> taperWeeksBike
-        RaceType.Relay200 -> taperWeeksRelay
+    /** Taper length by distance: ≤ 10 mi run or ≤ 50 mi ride → short; half → 2; marathon and up → marathon taper. */
+    fun taperWeeks(race: RaceType, distanceMi: Double = race.defaultMi): Int = when {
+        race.relay -> taperWeeksRelay
+        race.sport == Sport.Ride -> if (distanceMi <= 50.0) taperWeeksShort else taperWeeksBike
+        distanceMi <= 10.0 -> taperWeeksShort
+        distanceMi <= 13.2 -> taperWeeksHalf
+        else -> taperWeeksMarathon
     }
 }
 
@@ -91,7 +126,11 @@ data class PlanInputs(
     val longDay: DayOfWeek,
     val strengthDays: Set<DayOfWeek>,
     val fixed: List<FixedSession> = emptyList(),
-)
+    /** Race distance for custom races (otherwise the catalog distance is used). */
+    val distanceMi: Double? = null,
+) {
+    val raceMi: Double get() = distanceMi?.takeIf { it > 0 } ?: race.defaultMi
+}
 
 data class PlannedSession(
     val date: LocalDate,
@@ -184,7 +223,7 @@ object PlanBuilder {
         val first = monday(inputs.startDate)
         val raceWeek = monday(inputs.raceDate)
         val weeks = ChronoUnit.WEEKS.between(first, raceWeek).toInt() + 1
-        val taper = rules.taperWeeks(inputs.race)
+        val taper = rules.taperWeeks(inputs.race, inputs.raceMi)
         if (inputs.raceDate.isBefore(inputs.startDate)) return PlanResult.Invalid("Race date is before the plan start")
         if (weeks < taper + 3) return PlanResult.Invalid("Need at least ${taper + 3} weeks before the race for base, taper and race week")
         val fixedDays = inputs.fixed.map { it.day }.toSet()
@@ -258,7 +297,7 @@ object PlanBuilder {
 
             var easyDays = (free - longDay - hard.toSet()).sortedBy { it.value }
             // Relay: back-to-back long sessions and one double day in peak weeks.
-            if (inputs.race == RaceType.Relay200 && phase == Phase.Peak) {
+            if (inputs.race.relay && phase == Phase.Peak) {
                 val next = longDay.plus(1)
                 if (next in easyDays) {
                     val b2b = (long * 0.6).roundToInt()

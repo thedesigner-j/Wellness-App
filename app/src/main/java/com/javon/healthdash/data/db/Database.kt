@@ -50,6 +50,8 @@ data class PlanEntity(
     val strengthDays: String,
     val weeklyMin: Int,
     val createdAt: Long,
+    /** Race distance for custom races (miles); null = the race type's standard distance. */
+    val distanceMi: Double? = null,
 )
 
 /** One planned session. Dates are epoch days. */
@@ -303,10 +305,10 @@ interface AppDao {
         SleepEntity::class, ReadingEntity::class, LabEntity::class,
         PlanEntity::class, PlannedEntity::class, AdjustmentEntity::class, FuelEntity::class,
     ],
-    version = 5,
+    version = 6,
     exportSchema = true,
     // Each version only adds tables or nullable columns, so Room migrates automatically and keeps data.
-    autoMigrations = [androidx.room.AutoMigration(from = 1, to = 2), androidx.room.AutoMigration(from = 2, to = 3), androidx.room.AutoMigration(from = 3, to = 4), androidx.room.AutoMigration(from = 4, to = 5)],
+    autoMigrations = [androidx.room.AutoMigration(from = 1, to = 2), androidx.room.AutoMigration(from = 2, to = 3), androidx.room.AutoMigration(from = 3, to = 4), androidx.room.AutoMigration(from = 4, to = 5), androidx.room.AutoMigration(from = 5, to = 6)],
 )
 abstract class AppDatabase : RoomDatabase() {
     abstract fun dao(): AppDao

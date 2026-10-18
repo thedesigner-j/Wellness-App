@@ -156,7 +156,7 @@ object RunPlanBuilder {
     ): Pair<PlanResult, RunPlanSummary?> {
         val first = PlanBuilder.monday(inputs.startDate)
         val weeks = ChronoUnit.WEEKS.between(first, PlanBuilder.monday(inputs.raceDate)).toInt() + 1
-        val taper = rules.taperWeeks(inputs.race)
+        val taper = rules.taperWeeks(inputs.race, inputs.raceMi)
         if (inputs.raceDate.isBefore(inputs.startDate)) return PlanResult.Invalid("Race date is before the plan start") to null
         if (weeks < taper + 3) return PlanResult.Invalid("Need at least ${taper + 3} weeks before the race for base, taper and race week") to null
         val fixedDays = inputs.fixed.map { it.day }.toSet()
@@ -165,15 +165,18 @@ object RunPlanBuilder {
         if (days.size < 3) return PlanResult.Invalid("Pick at least 3 running days") to null
         if (free.isEmpty()) return PlanResult.Invalid("Leave at least one day free for the long run") to null
 
-        val relay = inputs.race == RaceType.Relay200
-        val raceMi = if (relay) 3 * 6.0 else MARATHON_MI
-        val goalSec = inputs.goalMin?.times(60) ?: (PaceMath.predictedMarathonSec(fitness) * if (relay) 18.0 / MARATHON_MI else 1.0).roundToInt()
-        val paces = PaceMath.forGoal(if (relay) 6.0 else MARATHON_MI, if (relay) (goalSec / 3.0).roundToInt() else goalSec)
+        val relay = inputs.race.relay
+        val raceMi = inputs.raceMi
+        // Finish goal: what current easy pace supports at this distance (Riegel from the marathon equivalent).
+        val predictedSec = PaceMath.riegel(PaceMath.predictedMarathonSec(fitness).toDouble(), MARATHON_MI, if (relay) raceMi / 3 else raceMi) * (if (relay) 3 else 1)
+        val goalSec = inputs.goalMin?.times(60) ?: predictedSec.roundToInt()
+        val paces = if (relay) PaceMath.forGoal(raceMi / 3, (goalSec / 3.0).roundToInt()) else PaceMath.forGoal(raceMi, goalSec)
+        val raceLabel = if (inputs.race.custom) "${r1(raceMi)}-mile race" else inputs.race.label
         val phases = PlanBuilder.phases(weeks, taper)
         val warnings = mutableListOf<String>()
 
         // ---- Long-run ladder: from current longest up to the peak, +2 mi/week max, cutback weeks. ----
-        val peakTarget = if (relay) runRules.relayPeakLongMi else runRules.peakLongMi
+        val peakTarget = peakLongFor(raceMi, relay, runRules)
         val start = r1(fitness.longestRunMi.coerceIn(4.0, peakTarget - 2))
         val peakWeek = phases.indexOfLast { it == Phase.Peak || it == Phase.Build }.coerceAtLeast(0)
         val longs = DoubleArray(weeks)
@@ -189,7 +192,7 @@ object RunPlanBuilder {
             longs[w] = last
         }
         val peakLong = longs.maxOrNull() ?: start
-        if (!relay && peakLong < 18) warnings += "With ${weeks} weeks, the long run can only safely reach ${r1(peakLong)} mi (most marathon plans peak at 18–20). Consider a later race or a finish goal."
+        if (peakLong < peakTarget - 2) warnings += "With ${weeks} weeks, the long run can only safely reach ${r1(peakLong)} mi (plans for this distance usually peak around ${r1(peakTarget)} mi). Consider a later race or a finish goal."
         // Taper long runs step down to race day.
         val taperLongs = when (taper) { 1 -> listOf(0.6); 2 -> listOf(0.65, 0.45); else -> listOf(0.8, 0.6, 0.45) }
         phases.forEachIndexed { w, p -> if (p == Phase.Taper) longs[w] = r1(peakLong * taperLongs[phases.subList(0, w).count { it == Phase.Taper }]) }
@@ -197,7 +200,7 @@ object RunPlanBuilder {
         // ---- Weekly mileage: from current, +10%/week, cutbacks; at least what the week's runs need. ----
         val runDays = free.size + inputs.fixed.count { it.sport == Sport.Run }
         val longShare = when { runDays <= 3 -> 0.45; runDays == 4 -> 0.40; runDays == 5 -> 0.35; else -> 0.30 }
-        val peakWeekly = r1(max(fitness.weeklyMiles, peakLong / longShare).coerceAtMost(peakLong * 3))
+        val peakWeekly = r1(max(fitness.weeklyMiles, peakLong / longShare).coerceAtMost(max(peakLong * 3, fitness.weeklyMiles * 1.3)))
         var weekly = max(fitness.weeklyMiles, start / longShare * 0.8)
         val targets = DoubleArray(weeks)
         for (w in 0 until weeks) {
@@ -213,7 +216,7 @@ object RunPlanBuilder {
             }
         }
         if (inputs.goalMin != null) {
-            val predicted = PaceMath.predictedMarathonSec(fitness) * (if (relay) 18.0 / MARATHON_MI else 1.0)
+            val predicted = predictedSec
             if (goalSec < predicted * 0.93) warnings += "Ambitious goal: your current easy pace (${PaceMath.fmt(fitness.easyPaceSec)}/mi) usually supports about ${PaceMath.fmtTime(predicted.roundToInt())}. The plan trains at your goal paces — re-check after a few weeks."
         }
 
@@ -256,8 +259,8 @@ object RunPlanBuilder {
                 val rd = inputs.raceDate.dayOfWeek
                 val shake = free.filter { it.value < rd.value }.sortedBy { it.value }.takeLast(2 - clubs.size.coerceAtMost(1))
                 shake.forEachIndexed { i, d -> easyRun(d, if (i == shake.lastIndex) 2.0 else 4.0, WorkoutKind.Recovery) }
-                sessions += PlannedSession(inputs.raceDate, Sport.Run, WorkoutKind.Race, (goalSec / 60.0).roundToInt(), fuel.note(goalSec / 60, Intensity.Hard), null, if (relay) raceMi else MARATHON_MI,
-                    if (relay) "Relay legs · goal ${PaceMath.fmtTime(goalSec)} total · ~${PaceMath.fmt(paces.race)}/mi" else "Marathon · goal ${PaceMath.fmtTime(goalSec)} · ${PaceMath.fmt(paces.race)}/mi")
+                sessions += PlannedSession(inputs.raceDate, Sport.Run, WorkoutKind.Race, (goalSec / 60.0).roundToInt(), fuel.note(goalSec / 60, Intensity.Hard), null, raceMi,
+                    if (relay) "Relay legs · goal ${PaceMath.fmtTime(goalSec)} total · ~${PaceMath.fmt(paces.race)}/mi" else "$raceLabel · goal ${PaceMath.fmtTime(goalSec)} · ${PaceMath.fmt(paces.race)}/mi")
                 out += PlanWeek(w, wkStart, phase, (sessions.sumOf { it.durationMin }), false, sessions.sortedBy { it.date })
                 continue
             }
@@ -266,7 +269,8 @@ object RunPlanBuilder {
             val longDay = if (inputs.longDay in free) inputs.longDay else free.maxBy { it.value }
             val longMi = longs[w]
             // Marathon-pace finish on alternate full build/peak long runs.
-            val mpWeek = !relay && (phase == Phase.Build || phase == Phase.Peak) && !lighter && w % 2 == 1
+            // Race-pace finishes on alternate long runs for half marathon and longer.
+            val mpWeek = !relay && raceMi >= 13.0 && (phase == Phase.Build || phase == Phase.Peak) && !lighter && w % 2 == 1
             if (mpWeek) mpFinish = min(10.0, max(mpFinish + 2, 4.0))
             val mp = if (mpWeek) min(mpFinish, longMi - 4) else 0.0
             val longPace = (paces.long.first + paces.long.last) / 2
@@ -297,14 +301,15 @@ object RunPlanBuilder {
             }
 
             var easyDays = (free - longDay - hard.toSet()).sortedBy { it.value }
-            if (relay && phase == Phase.Peak) {
-                val next = longDay.plus(1)
-                if (next in easyDays) {
+            // Relay and ultras: back-to-back long days in peak weeks (relay also gets a double day).
+            if ((relay || raceMi > 27.0) && phase == Phase.Peak) {
+                val next = listOf(longDay.plus(1), longDay.minus(1)).firstOrNull { it in easyDays }
+                if (next != null) {
                     val b2b = r1(longMi * 0.6)
-                    used += run(next, WorkoutKind.BackToBack, b2b, (b2b * paces.long.last).roundToInt(), "${b2b} mi on tired legs @ ${PaceMath.fmtRange(paces.long)}/mi — relay practice")
+                    used += run(next, WorkoutKind.BackToBack, b2b, (b2b * paces.long.last).roundToInt(), "${b2b} mi back-to-back with the long run @ ${PaceMath.fmtRange(paces.long)}/mi — ${if (relay) "relay" else "ultra"} practice")
                     easyDays = easyDays - next
                 }
-                easyDays.firstOrNull()?.let { d ->
+                if (relay) easyDays.firstOrNull()?.let { d ->
                     used += run(d, WorkoutKind.DoubleDay, 8.0, 8 * paces.easy.last, "Double: 4 mi AM + 4 mi PM easy — relay practice")
                     easyDays = easyDays - d
                 }
@@ -326,4 +331,16 @@ object RunPlanBuilder {
     }
 
     fun weekMiles(w: PlanWeek) = w.sessions.filter { it.sport == Sport.Run }.sumOf { it.distanceMi ?: 0.0 }
+}
+
+/** Typical peak long run for a race distance (miles). */
+fun peakLongFor(raceMi: Double, relay: Boolean, rules: RunRules = RunRules()): Double = when {
+    relay -> rules.relayPeakLongMi
+    raceMi <= 3.2 -> 7.0
+    raceMi <= 6.3 -> 9.0
+    raceMi <= 10.0 -> 12.0
+    raceMi <= 13.2 -> 14.0
+    raceMi <= 26.3 -> rules.peakLongMi
+    raceMi <= 31.1 -> 22.0
+    else -> 26.0
 }
