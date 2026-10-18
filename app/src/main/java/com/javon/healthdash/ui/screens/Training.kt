@@ -133,12 +133,22 @@ fun sessionStatus(e: PlannedEntity, s: DashboardState, zone: ZoneId): WorkoutCar
 fun sessionDetail(e: PlannedEntity, zones: List<HrZone>): String =
     listOfNotNull(e.phase.lowercase().replaceFirstChar(Char::uppercase) + " week", Zones.forKind(WorkoutKind.valueOf(e.kind), zones)).joinToString(" · ")
 
-/** Average endurance minutes per week over the last 4 full weeks (auto-fill for the plan builder). */
-fun recentWeeklyMinutes(s: DashboardState, zone: ZoneId): Int {
-    val thisWeek = PlanBuilder.monday(localDateOf(s.nowMs, zone))
-    val weekly = Completion.weeklyMinutes(s.workouts.map { it.done() }, zone)
-    return (1..4).sumOf { weekly[thisWeek.minusWeeks(it.toLong())] ?: 0 } / 4
+data class RecentVolume(val weeklyMin: Int, val workouts: Int, val days: Int, val sources: Set<String>)
+
+/**
+ * Endurance minutes per week from Garmin (via Health Connect) over the last 28 days, scaled to the
+ * days of data that exist — a new Garmin connection with one week of history isn't divided by four.
+ */
+fun recentVolume(s: DashboardState): RecentVolume {
+    val from = s.nowMs - 28 * 24 * 3_600_000L
+    val runsRides = s.workouts.filter { it.startMs >= from && sportOf(it.exerciseType).let { sp -> sp == Sport.Run || sp == Sport.Ride } }
+    val firstData = listOfNotNull(s.workouts.minOfOrNull { it.startMs }, s.steps.minOfOrNull { it.startMs }).minOrNull() ?: s.nowMs
+    val days = ((s.nowMs - maxOf(from, firstData)) / (24 * 3_600_000L)).toInt().coerceIn(7, 28)
+    val total = runsRides.sumOf { (it.endMs - it.startMs) / MINUTE_MS }
+    return RecentVolume((total * 7 / days).toInt(), runsRides.size, days, runsRides.map { it.source }.toSet())
 }
+
+fun recentWeeklyMinutes(s: DashboardState, zone: ZoneId): Int = recentVolume(s).weeklyMin
 
 /** Runs the missed-session and readiness rules whenever training data changes. */
 @Composable

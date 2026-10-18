@@ -183,6 +183,12 @@ fun PlanBuilderScreen(container: AppContainer, state: DashboardState, onClose: (
     var timeGoal by remember { mutableStateOf(false) }
     var goal by remember { mutableStateOf("3:45") }
     var weekly by remember { mutableStateOf(recentWeeklyMinutes(state, zone).takeIf { it > 0 }?.toString() ?: "") }
+    var weeklyEdited by remember { mutableStateOf(false) }
+    // Fill from Garmin once the data has loaded, unless the user already typed a value.
+    androidx.compose.runtime.LaunchedEffect(state.loading, state.workouts.size) {
+        val v = recentWeeklyMinutes(state, zone)
+        if (!weeklyEdited && v > 0) weekly = v.toString()
+    }
     var days by remember { mutableStateOf(setOf(DayOfWeek.TUESDAY, DayOfWeek.WEDNESDAY, DayOfWeek.THURSDAY, DayOfWeek.SATURDAY, DayOfWeek.SUNDAY)) }
     var longDay by remember { mutableStateOf(DayOfWeek.SATURDAY) }
     var strength by remember { mutableStateOf(setOf(DayOfWeek.MONDAY, DayOfWeek.THURSDAY)) }
@@ -247,13 +253,17 @@ fun PlanBuilderScreen(container: AppContainer, state: DashboardState, onClose: (
             }
             3 -> {
                 Heading("Volume and availability")
+                val rv = recentVolume(state)
+                val fromGarmin = rv.sources.any { it.contains("garmin") }
                 AppCard {
                     Row(Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.SpaceBetween) {
                         Text("Current weekly volume", style = Theme.type.labelL, color = Theme.colors.textPrimary)
-                        Tag("From Garmin · last 4 weeks", TagType.Derived)
+                        Tag(if (rv.workouts == 0) "Manual" else if (fromGarmin) "From Garmin" else "From Health Connect", TagType.Derived)
                     }
-                    AppTextField("Minutes per week", weekly, { weekly = it }, suffix = "min", keyboardType = KeyboardType.Number,
-                        helper = if (recentWeeklyMinutes(state, zone) == 0) "No recent workouts found — enter your usual weekly training time." else "Average of your recent endurance workouts. Edit if needed.")
+                    AppTextField("Minutes per week", weekly, { weekly = it; weeklyEdited = true }, suffix = "min", keyboardType = KeyboardType.Number,
+                        helper = if (rv.workouts == 0) "No runs or rides in the last 28 days — enter your usual weekly training time."
+                        else "${rv.workouts} ${if (rv.workouts == 1) "workout" else "workouts"} over the last ${rv.days} days of data → ${rv.weeklyMin} min/week. Edit if needed.")
+                    if (rv.days < 21 && rv.workouts > 0) Caption("Based on only ${rv.days} days of Garmin history — check it matches a normal week.")
                 }
                 Text("Training days", style = Theme.type.labelM, color = Theme.colors.textSecondary)
                 FlowRow(horizontalArrangement = Arrangement.spacedBy(Dimens.spacingSm), verticalArrangement = Arrangement.spacedBy(Dimens.spacingSm)) {
