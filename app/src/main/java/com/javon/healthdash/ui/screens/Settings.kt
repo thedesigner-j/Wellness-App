@@ -91,13 +91,14 @@ fun MoreScreen(onTab: (Tab) -> Unit, onSettings: () -> Unit, onSources: () -> Un
 }
 
 @Composable
-fun SettingsScreen(container: AppContainer, onTab: (Tab) -> Unit, onBack: () -> Unit, onSources: () -> Unit, onKeys: () -> Unit, onTargets: () -> Unit, onRecurring: () -> Unit) {
+fun SettingsScreen(container: AppContainer, onTab: (Tab) -> Unit, onBack: () -> Unit, onSources: () -> Unit, onKeys: () -> Unit, onTargets: () -> Unit, onRecurring: () -> Unit, onImport: () -> Unit) {
     val recurring by container.prefs.recurring.collectAsStateWithLifecycle()
     val prefs by container.prefs.state.collectAsStateWithLifecycle()
     val scope = rememberCoroutineScope()
     ScreenFrame(topBar = { SmallTopBar("Settings", onBack) }, bottomBar = { BottomNav(Tab.More) { onTab(it) } }) {
         RowGroup {
             ListRow("Data sources", subtitle = "Health Connect · glucose source", icon = AppIcons.sync, onClick = onSources)
+            ListRow("Import Garmin history", subtitle = "Past runs from a Garmin Connect CSV export", icon = AppIcons.document, onClick = onImport)
             ListRow("Targets & training rules", subtitle = "Ranges, windows, plan rules, fueling table", icon = AppIcons.trends, onClick = onTargets)
             ListRow("Recurring sessions", subtitle = recurring.takeIf { it.isNotEmpty() }?.joinToString { it.name } ?: "e.g. your weekly run club", icon = AppIcons.calendar, onClick = onRecurring)
         }

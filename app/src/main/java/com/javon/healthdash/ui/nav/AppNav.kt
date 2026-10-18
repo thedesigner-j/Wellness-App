@@ -70,6 +70,7 @@ object Routes {
     const val KEYS = "settings/keys"
     const val TARGETS = "settings/targets"
     const val RECURRING = "settings/recurring"
+    const val GARMIN_IMPORT = "settings/garmin-import"
     const val TRENDS = "trends"
     const val METRIC = "trends/{metric}/{days}"
     const val DAY = "day/{epochDay}"
@@ -151,7 +152,7 @@ fun AppNav(container: AppContainer) {
             RacePlansScreen(container, state, onBack = back, onNew = { nav.navigate(Routes.PLAN_NEW) }, onWeek = { nav.navigate(Routes.week(it)) }, onExport = { nav.navigate(Routes.EXPORT) })
         }
         composable(Routes.PLAN_NEW) {
-            PlanBuilderScreen(container, state, onClose = back, onCreated = { nav.navigate(Routes.TRAINING) { popUpTo(Routes.TRAINING) } })
+            PlanBuilderScreen(container, state, onClose = back, onCreated = { nav.navigate(Routes.TRAINING) { popUpTo(Routes.TRAINING) } }, onImport = { nav.navigate(Routes.GARMIN_IMPORT) })
         }
         composable(Routes.WEEK, arguments = listOf(navArgument("epochDay") { type = NavType.LongType })) { e ->
             WeekViewScreen(container, state, java.time.LocalDate.ofEpochDay(e.arguments!!.getLong("epochDay")), onBack = back,
@@ -173,11 +174,12 @@ fun AppNav(container: AppContainer) {
             FoodDetailScreen(state, android.net.Uri.decode(entry.arguments!!.getString("key")!!), onBack = back, onMeal = { nav.navigate(Routes.meal(it)) })
         }
         composable(Routes.SETTINGS) {
-            SettingsScreen(container, onTab, onBack = back, onSources = { nav.navigate(Routes.SOURCES) }, onKeys = { nav.navigate(Routes.KEYS) }, onTargets = { nav.navigate(Routes.TARGETS) }, onRecurring = { nav.navigate(Routes.RECURRING) })
+            SettingsScreen(container, onTab, onBack = back, onSources = { nav.navigate(Routes.SOURCES) }, onKeys = { nav.navigate(Routes.KEYS) }, onTargets = { nav.navigate(Routes.TARGETS) }, onRecurring = { nav.navigate(Routes.RECURRING) }, onImport = { nav.navigate(Routes.GARMIN_IMPORT) })
         }
         composable(Routes.SOURCES) { DataSourcesScreen(container, state, onBack = back, onSync = dash::sync) }
         composable(Routes.KEYS) { ApiKeysScreen(container, onBack = back) }
         composable(Routes.TARGETS) { TargetsScreen(container, state, onBack = back) }
+        composable(Routes.GARMIN_IMPORT) { com.javon.healthdash.ui.screens.GarminImportScreen(container, state, onBack = back) }
         composable(Routes.RECURRING) { com.javon.healthdash.ui.screens.RecurringSessionsScreen(container, onBack = back) }
 
         logMealGraph(

@@ -172,7 +172,7 @@ fun RacePlansScreen(container: AppContainer, state: DashboardState, onBack: () -
 
 @OptIn(ExperimentalMaterial3Api::class)
 @Composable
-fun PlanBuilderScreen(container: AppContainer, state: DashboardState, onClose: () -> Unit, onCreated: () -> Unit) {
+fun PlanBuilderScreen(container: AppContainer, state: DashboardState, onClose: () -> Unit, onCreated: () -> Unit, onImport: () -> Unit) {
     val zone = ZoneId.systemDefault()
     val data = rememberTrainingData(container)
     val scope = rememberCoroutineScope()
@@ -200,7 +200,7 @@ fun PlanBuilderScreen(container: AppContainer, state: DashboardState, onClose: (
     var easyPace by remember { mutableStateOf("") }
     var fitEdited by remember { mutableStateOf(false) }
     val garminFit = runFitness(state)
-    androidx.compose.runtime.LaunchedEffect(state.loading, state.workouts.size) {
+    androidx.compose.runtime.LaunchedEffect(garminFit) {
         val f = runFitness(state)
         if (!fitEdited && f != null) { weeklyMi = Fmt.one(f.weeklyMiles); longestMi = Fmt.one(f.longestRunMi); easyPace = PaceMath.fmt(f.easyPaceSec) }
     }
@@ -289,21 +289,42 @@ fun PlanBuilderScreen(container: AppContainer, state: DashboardState, onClose: (
                 val fromGarmin = rv.sources.any { it.contains("garmin") }
                 if (isRun) {
                     HealthPermissionNotice(container)
+                    val auto = garminFit != null && !fitEdited
                     AppCard {
                         Row(Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.SpaceBetween) {
                             Text("Your running now", style = Theme.type.labelL, color = Theme.colors.textPrimary)
-                            Tag(if (garminFit != null) "From Garmin · ${garminFit.runs} runs" else "Manual", TagType.Derived)
+                            Tag(if (auto) "From Garmin · ${garminFit!!.runs} runs" else "Manual", TagType.Derived)
                         }
-                        Text(
-                            if (garminFit != null) "From your runs in the last ${garminFit.days} days. Edit if it doesn't match a normal week."
-                            else "No Garmin runs with distance in the last 30 days yet — enter your current running.",
-                            style = Theme.type.bodyS, color = Theme.colors.textSecondary,
-                        )
-                        AppTextField("Weekly mileage", weeklyMi, { weeklyMi = it; fitEdited = true }, suffix = "mi", keyboardType = KeyboardType.Decimal)
-                        AppTextField("Longest run, last 30 days", longestMi, { longestMi = it; fitEdited = true }, suffix = "mi", keyboardType = KeyboardType.Decimal)
-                        AppTextField("Easy pace", easyPace, { easyPace = it; fitEdited = true }, suffix = "/mi", placeholder = "10:00",
-                            error = if (easyPace.isNotBlank() && parsePace(easyPace) == null) "Use m:ss, e.g. 9:45" else null)
-                        if (garminFit != null && garminFit.days < 21) Caption("Based on ${garminFit.days} days of Garmin history.")
+                        if (auto) {
+                            // Pulled automatically from the last 30 days of runs: average week, longest run, typical pace.
+                            MetricTiles(
+                                listOf(
+                                    "Weekly mileage" to "${weeklyMi} mi",
+                                    "Longest run" to "${longestMi} mi",
+                                    "Typical pace" to "${easyPace}/mi",
+                                ),
+                            )
+                            Text(
+                                "Averaged from ${garminFit!!.runs} ${if (garminFit.runs == 1) "run" else "runs"} over the last ${garminFit.days} days. Typical pace is your median run pace — the plan sets your easy runs around it and your workouts from your goal time.",
+                                style = Theme.type.bodyS, color = Theme.colors.textSecondary,
+                            )
+                            Text("Adjust", style = Theme.type.labelM, color = Theme.colors.textAccent, modifier = Modifier.clickable { fitEdited = true }.padding(vertical = Dimens.spacingXs))
+                        } else {
+                            Text(
+                                if (garminFit == null) "No Garmin runs with distance in the last 30 days yet — import your history or enter your current running." else "Edit to match a normal week.",
+                                style = Theme.type.bodyS, color = Theme.colors.textSecondary,
+                            )
+                            AppTextField("Weekly mileage", weeklyMi, { weeklyMi = it; fitEdited = true }, suffix = "mi", keyboardType = KeyboardType.Decimal)
+                            AppTextField("Longest run, last 30 days", longestMi, { longestMi = it; fitEdited = true }, suffix = "mi", keyboardType = KeyboardType.Decimal)
+                            AppTextField("Typical pace", easyPace, { easyPace = it; fitEdited = true }, suffix = "/mi", placeholder = "10:00",
+                                error = if (easyPace.isNotBlank() && parsePace(easyPace) == null) "Use m:ss, e.g. 9:45" else null)
+                            if (garminFit != null) Text("Use Garmin numbers", style = Theme.type.labelM, color = Theme.colors.textAccent,
+                                modifier = Modifier.clickable { fitEdited = false; weeklyMi = Fmt.one(garminFit.weeklyMiles); longestMi = Fmt.one(garminFit.longestRunMi); easyPace = PaceMath.fmt(garminFit.easyPaceSec) }.padding(vertical = Dimens.spacingXs))
+                        }
+                        if (garminFit == null || garminFit.days < 21 || garminFit.runs < 4) {
+                            Caption(if (garminFit == null) "Garmin only shares runs from the day it was connected to Health Connect." else "Only ${garminFit.runs} run(s) over ${garminFit.days} days so far — Garmin only shares new runs with Health Connect.")
+                            AppButton("Import Garmin history", onImport, Modifier.fillMaxWidth(), style = ButtonStyle.Secondary, icon = AppIcons.document)
+                        }
                     }
                 } else AppCard {
                     Row(Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.SpaceBetween) {
