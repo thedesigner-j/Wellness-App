@@ -506,13 +506,28 @@ object Zones {
 
 data class DoneWorkout(val window: TimeWindow, val sport: Sport?)
 
+/** Rides as cross-training for run plans. */
+object CrossTraining {
+    /** Only easy and recovery runs can be swapped for a ride; long runs and quality sessions stay run-only. */
+    val SWAPPABLE = setOf(WorkoutKind.Easy, WorkoutKind.Recovery)
+
+    fun canSwap(sport: Sport, kind: WorkoutKind) = sport == Sport.Run && kind in SWAPPABLE
+
+    /**
+     * Same sport and at least half the planned time; or, for an easy/recovery run, a ride at least as long
+     * as the planned run (minute for minute a ride is easier, so it needs the full time).
+     */
+    fun counts(sport: Sport, kind: WorkoutKind, plannedMin: Int, doneSport: Sport?, doneMin: Int): Boolean =
+        if (doneSport == null || doneSport == sport) doneMin * 2 >= plannedMin
+        else doneSport == Sport.Ride && canSwap(sport, kind) && doneMin >= plannedMin
+}
+
 object Completion {
-    /** A planned session counts as done if a workout of the same sport that day lasts at least half the planned time. */
+    /** A planned session counts as done per [CrossTraining.counts] for a workout that day. */
     fun matches(session: PlannedSession, done: List<DoneWorkout>, zone: java.time.ZoneId): DoneWorkout? =
         done.firstOrNull { w ->
             localDateOf(w.window.startMs, zone) == session.date &&
-                (w.sport == null || w.sport == session.sport) &&
-                w.window.durationMs >= session.durationMin * MINUTE_MS / 2
+                CrossTraining.counts(session.sport, session.kind, session.durationMin, w.sport, (w.window.durationMs / MINUTE_MS).toInt())
         }
 
     /** Weekly endurance minutes actually done, by Monday of each week. */

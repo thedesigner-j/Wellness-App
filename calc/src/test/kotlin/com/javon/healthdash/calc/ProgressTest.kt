@@ -64,6 +64,42 @@ class ProgressTest {
         assertThat(p.weekIndex).isEqualTo(0)
     }
 
+    @Test fun ridesStandInForEasyRunsOnly() {
+        assertThat(CrossTraining.counts(Sport.Run, WorkoutKind.Easy, 50, Sport.Ride, 50)).isTrue()
+        assertThat(CrossTraining.counts(Sport.Run, WorkoutKind.Recovery, 30, Sport.Ride, 45)).isTrue()
+        // A ride needs the full planned time; a run only half.
+        assertThat(CrossTraining.counts(Sport.Run, WorkoutKind.Easy, 50, Sport.Ride, 40)).isFalse()
+        assertThat(CrossTraining.counts(Sport.Run, WorkoutKind.Easy, 50, Sport.Run, 25)).isTrue()
+        // Long runs and quality sessions stay run-only.
+        assertThat(CrossTraining.counts(Sport.Run, WorkoutKind.Long, 90, Sport.Ride, 240)).isFalse()
+        assertThat(CrossTraining.counts(Sport.Run, WorkoutKind.Tempo, 50, Sport.Ride, 90)).isFalse()
+        assertThat(CrossTraining.counts(Sport.Run, WorkoutKind.Intervals, 50, Sport.Ride, 90)).isFalse()
+        // Ride plans aren't completed by runs.
+        assertThat(CrossTraining.counts(Sport.Ride, WorkoutKind.Easy, 60, Sport.Run, 60)).isFalse()
+    }
+
+    @Test fun rideOnAnEasyDayKeepsYouOnTrackAndAddsMiles() {
+        val past = sessions.filter { it.date.isBefore(today) && it.sport != Sport.Strength }
+        // Every easy run in the last 2 weeks replaced by a ride of the same length.
+        val done = past.map { s -> if (s.kind == WorkoutKind.Easy) DoneActivity(s.date, Sport.Ride, s.durationMin, s.durationMin / 60.0 * 15) else DoneActivity(s.date, s.sport, s.durationMin, s.distanceMi) }
+        val p = PlanProgress.compute(sessions, done, today, start, race, easyPaceSec = 600)
+        assertThat(p.verdict).isEqualTo(Verdict.OnTrack)
+        assertThat(p.doneSoFar).isEqualTo(p.dueSoFar)
+        // Week 1 miles: rides add 40% of ride time at 10:00/mi.
+        val w0 = p.weeks.first()
+        val rideMin = past.filter { it.week == 0 && it.kind == WorkoutKind.Easy }.sumOf { it.durationMin }
+        assertThat(w0.rideCreditMi).isWithin(1e-9).of(minOf(rideMin * 0.4 / 10, maxOf(w0.doneMi, 10.0)))
+        assertThat(w0.rideCreditMi).isGreaterThan(0.0)
+    }
+
+    @Test fun rideInsteadOfLongRunIsMissed() {
+        val past = sessions.filter { it.date.isBefore(today) && it.sport != Sport.Strength }
+        val done = past.map { s -> if (s.kind == WorkoutKind.Long) DoneActivity(s.date, Sport.Ride, 240, 60.0) else DoneActivity(s.date, s.sport, s.durationMin, s.distanceMi) }
+        val p = PlanProgress.compute(sessions, done, today, start, race)
+        assertThat(p.keyMissed14).isAtLeast(1)
+        assertThat(p.lastLong).isNull()
+    }
+
     @Test fun runsBeforeThePlanStartDontCount() {
         // Plan created on a Sunday: Mon–Sat runs that week happened before the plan.
         val sunday = LocalDate.of(2026, 10, 18)

@@ -141,6 +141,10 @@ fun sessionStatus(e: PlannedEntity, s: DashboardState, zone: ZoneId): WorkoutCar
     else -> WorkoutCardStatus.Planned
 }
 
+/** True when a planned run was completed by a ride (cross-training on an easy day). */
+fun doneAsRide(e: PlannedEntity, s: DashboardState, zone: ZoneId): Boolean =
+    e.sport == Sport.Run.name && Completion.matches(e.toSession(), s.workouts.map { it.done() }, zone)?.sport == Sport.Ride
+
 fun sessionDetail(e: PlannedEntity, zones: List<HrZone>): String =
     listOfNotNull(e.detail, (if (e.distanceMi != null && e.sport != Sport.Strength.name) "≈ ${e.durationMin / 60}:${"%02d".format(e.durationMin % 60)}" else null), Zones.forKind(WorkoutKind.valueOf(e.kind), zones), e.phase.lowercase().replaceFirstChar(Char::uppercase) + " week").joinToString(" · ")
 
@@ -262,6 +266,7 @@ fun TrainingScreen(
             sessions,
             state.workouts.map { DoneActivity(localDateOf(it.startMs, zone), sportOf(it.exerciseType), ((it.endMs - it.startMs) / MINUTE_MS).toInt(), it.distanceM?.div(com.javon.healthdash.calc.METERS_PER_MI)) },
             today, LocalDate.ofEpochDay(plan.startDate), LocalDate.ofEpochDay(plan.raceDate),
+            easyPaceSec = runFitness(state)?.takeIf { it.runs > 0 }?.easyPaceSec ?: com.javon.healthdash.calc.Fitness.DEFAULT_EASY_PACE_SEC,
         )
     }
 
@@ -279,7 +284,12 @@ fun TrainingScreen(
                 }
                 WeekStrip(progress.thisWeek) { dayOpen = it.date }
                 ProgressLine("Sessions", "${progress.weekSessionsDone} of ${progress.weekSessions}", if (progress.weekSessions == 0) 0.0 else progress.weekSessionsDone.toDouble() / progress.weekSessions)
-                if (progress.weekPlannedMi > 0) ProgressLine("Miles", "${Fmt.one(progress.weekDoneMi)} of ${Fmt.one(progress.weekPlannedMi)} mi", progress.weekDoneMi / progress.weekPlannedMi)
+                if (progress.weekPlannedMi > 0) {
+                    val total = progress.weekDoneMi + progress.weekRideCreditMi
+                    ProgressLine("Miles", "${Fmt.one(total)} of ${Fmt.one(progress.weekPlannedMi)} mi", total / progress.weekPlannedMi)
+                    if (progress.weekRideCreditMi > 0) Caption("${Fmt.one(progress.weekDoneMi)} mi running + ${Fmt.one(progress.weekRideCreditMi)} mi run-equivalent from rides (40% of ride time at your easy pace).")
+                }
+                if (progress.sport == Sport.Run) Caption("A ride at least as long as a planned easy or recovery run counts as that run. Long runs, tempos and intervals stay run-only.")
             }
         }
 
@@ -291,7 +301,7 @@ fun TrainingScreen(
         when {
             data.plans.isEmpty() -> EmptyState("No race plan yet", "Create a plan for any run or ride distance. It's built by fixed rules from your recent training.")
             todaySessions.isEmpty() -> AppCard { Text("Rest day — nothing planned today.", style = Theme.type.bodyM, color = Theme.colors.textSecondary) }
-            else -> todaySessions.forEach { e -> WorkoutCard(sessionTitle(e), sessionDetail(e, zones), e.note, sessionStatus(e, state, zone), sportIcon(Sport.valueOf(e.sport))) }
+            else -> todaySessions.forEach { e -> WorkoutCard(sessionTitle(e), (if (doneAsRide(e, state, zone)) "Done as a ride · " else "") + sessionDetail(e, zones), e.note, sessionStatus(e, state, zone), sportIcon(Sport.valueOf(e.sport))) }
         }
 
         if (progress != null) {
@@ -316,7 +326,7 @@ fun TrainingScreen(
             val from = (progress.weekIndex - 5).coerceAtLeast(0)
             val shown = progress.weeks.filter { it.week in from..(progress.weekIndex + 2) }
             WeeklyBars(
-                "Weekly miles · plan vs done", planned = shown.map { it.plannedMi.toInt() }, done = shown.map { if (it.week > progress.weekIndex) null else it.doneMi.toInt() },
+                "Weekly miles · plan vs done", planned = shown.map { it.plannedMi.toInt() }, done = shown.map { if (it.week > progress.weekIndex) null else (it.doneMi + it.rideCreditMi).toInt() },
                 labels = shown.map { if (it.week == progress.weekIndex) "Now" else "W${it.week + 1}" },
             )
         }

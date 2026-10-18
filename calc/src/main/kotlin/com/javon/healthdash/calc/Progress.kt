@@ -2,6 +2,8 @@ package com.javon.healthdash.calc
 
 import java.time.LocalDate
 import java.time.temporal.ChronoUnit
+import kotlin.math.max
+import kotlin.math.min
 import kotlin.math.roundToInt
 
 // Where you are in a race plan and whether you're on track. Fixed rules, no AI.
@@ -29,7 +31,7 @@ enum class Verdict(val label: String) { EarlyDays("Just started"), OnTrack("On t
 
 data class WeekDay(val date: LocalDate, val mark: DayMark, val sessions: List<ProgressSession>)
 
-data class WeekTotals(val week: Int, val monday: LocalDate, val phase: Phase, val plannedMi: Double, val doneMi: Double, val plannedMin: Int, val doneMin: Int)
+data class WeekTotals(val week: Int, val monday: LocalDate, val phase: Phase, val plannedMi: Double, val doneMi: Double, val plannedMin: Int, val doneMin: Int, val rideCreditMi: Double = 0.0)
 
 data class PlanStatus(
     val weekIndex: Int,
@@ -50,6 +52,8 @@ data class PlanStatus(
     val thisWeek: List<WeekDay>,
     val weekPlannedMi: Double,
     val weekDoneMi: Double,
+    /** Run-equivalent miles from rides this week (run plans only). */
+    val weekRideCreditMi: Double,
     val weekSessions: Int,
     val weekSessionsDone: Int,
     val weeks: List<WeekTotals>,
@@ -63,11 +67,18 @@ object PlanProgress {
 
     private fun endurance(s: ProgressSession) = s.sport != Sport.Strength && s.status != "Dropped"
 
-    /** Same day, same sport, and at least half the planned time (as [Completion.matches]). */
+    /** A workout that day that completes the session per [CrossTraining.counts] (rides can stand in for easy runs). */
     fun match(s: ProgressSession, done: List<DoneActivity>): DoneActivity? =
-        done.firstOrNull { d -> d.date == s.date && (d.sport == null || d.sport == s.sport) && d.durationMin * 2 >= s.durationMin }
+        done.firstOrNull { d -> d.date == s.date && CrossTraining.counts(s.sport, s.kind, s.durationMin, d.sport, d.durationMin) }
 
-    fun compute(sessions: List<ProgressSession>, done: List<DoneActivity>, today: LocalDate, startDate: LocalDate, raceDate: LocalDate): PlanStatus {
+    /** Run-equivalent miles from rides: ride minutes × 0.4 ÷ easy pace, capped at max(run miles, 10) — as [Fitness.fromActivities]. */
+    fun rideCredit(rideMin: Int, runMi: Double, easyPaceSec: Int): Double =
+        min(rideMin * Fitness.RIDE_TO_RUN_TIME * 60 / easyPaceSec, max(runMi, 10.0))
+
+    fun compute(
+        sessions: List<ProgressSession>, done: List<DoneActivity>, today: LocalDate, startDate: LocalDate, raceDate: LocalDate,
+        easyPaceSec: Int = Fitness.DEFAULT_EASY_PACE_SEC,
+    ): PlanStatus {
         val sport = sessions.filter { it.sport != Sport.Strength }.groupingBy { it.sport }.eachCount().maxByOrNull { it.value }?.key ?: Sport.Run
         val firstMonday = PlanBuilder.monday(startDate)
         val totalWeeks = (sessions.maxOfOrNull { it.week } ?: 0) + 1
@@ -125,18 +136,23 @@ object PlanProgress {
         }
         fun miles(from: LocalDate, to: LocalDate) = done.filter { it.sport == sport && !it.date.isBefore(maxOf(from, startDate)) && !it.date.isAfter(to) }.sumOf { it.distanceMi ?: 0.0 }
         fun minutes(from: LocalDate, to: LocalDate) = done.filter { it.sport == sport && !it.date.isBefore(maxOf(from, startDate)) && !it.date.isAfter(to) }.sumOf { it.durationMin }
+        fun credit(from: LocalDate, to: LocalDate): Double {
+            if (sport != Sport.Run) return 0.0
+            val rideMin = done.filter { it.sport == Sport.Ride && !it.date.isBefore(maxOf(from, startDate)) && !it.date.isAfter(to) }.sumOf { it.durationMin }
+            return rideCredit(rideMin, miles(from, to), easyPaceSec)
+        }
         val weekEndur = endur.filter { PlanBuilder.monday(it.date) == monday && it.kind != WorkoutKind.Race }
         val weeks = endur.groupBy { it.week }.toSortedMap().map { (w, l) ->
             val m = firstMonday.plusWeeks(w.toLong())
             val past = !m.isAfter(today)
             val plain = l.filter { it.kind != WorkoutKind.Race && it.sport == sport }
-            WeekTotals(w, m, l.first().phase, plain.sumOf { it.distanceMi ?: 0.0 }, if (past) miles(m, m.plusDays(6)) else 0.0, plain.sumOf { it.durationMin }, if (past) minutes(m, m.plusDays(6)) else 0)
+            WeekTotals(w, m, l.first().phase, plain.sumOf { it.distanceMi ?: 0.0 }, if (past) miles(m, m.plusDays(6)) else 0.0, plain.sumOf { it.durationMin }, if (past) minutes(m, m.plusDays(6)) else 0, if (past) credit(m, m.plusDays(6)) else 0.0)
         }
         val lastLong = due.filter { it.kind == WorkoutKind.Long }.sortedByDescending { it.date }.firstNotNullOfOrNull { s -> match(s, done)?.let { s to it } }
         return PlanStatus(
             weekIndex, totalWeeks, phase, ChronoUnit.DAYS.between(today, raceDate).toInt().coerceAtLeast(0), elapsed,
             due.size, doneSet.size, due14.size, done14.size, keyMissed14, verdict, reason,
-            thisWeek, weekEndur.filter { it.sport == sport }.sumOf { it.distanceMi ?: 0.0 }, miles(monday, monday.plusDays(6)),
+            thisWeek, weekEndur.filter { it.sport == sport }.sumOf { it.distanceMi ?: 0.0 }, miles(monday, monday.plusDays(6)), credit(monday, monday.plusDays(6)),
             weekEndur.size, weekEndur.count { match(it, done) != null },
             weeks, endur.filter { !it.date.isBefore(today) && it.kind in KEY && match(it, done) == null }.minByOrNull { it.date }, lastLong, sport,
         )
