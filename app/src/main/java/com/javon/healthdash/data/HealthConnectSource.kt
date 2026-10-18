@@ -102,6 +102,7 @@ class HealthConnectSource(private val context: Context, private val dao: AppDao)
 
         suspend fun <T> step(type: DataType, block: suspend () -> Triple<Int, Long?, Set<String>>) {
             val state = runCatching { block() }
+            android.util.Log.i("HealthSync", "$type -> ${state.getOrNull()?.let { "count24h=${it.first} last=${it.second} origins=${it.third}" } ?: "error ${state.exceptionOrNull()}"}")
             dao.upsertSync(
                 state.fold(
                     onSuccess = { (count, last, origins) -> SyncStateEntity(type.name, now.toEpochMilli(), last, count, origins.joinToString(","), null) },
