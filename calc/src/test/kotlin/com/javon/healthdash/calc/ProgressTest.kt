@@ -64,6 +64,14 @@ class ProgressTest {
         assertThat(p.weekIndex).isEqualTo(0)
     }
 
+    @Test fun runsBeforeThePlanStartDontCount() {
+        // Plan created on a Sunday: Mon–Sat runs that week happened before the plan.
+        val sunday = LocalDate.of(2026, 10, 18)
+        val before = listOf(DoneActivity(sunday.minusDays(3), Sport.Run, 60, 6.6))
+        val p = PlanProgress.compute(sessions, before, sunday, sunday, race)
+        assertThat(p.weekDoneMi).isEqualTo(0.0)
+    }
+
     @Test fun weeklyMilesPlannedVsDone() {
         val past = sessions.filter { it.date.isBefore(today) }
         val p = PlanProgress.compute(sessions, doneFor(past), today, start, race)

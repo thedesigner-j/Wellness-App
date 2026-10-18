@@ -123,8 +123,8 @@ object PlanProgress {
             }
             WeekDay(d, mark, list)
         }
-        fun miles(from: LocalDate, to: LocalDate) = done.filter { it.sport == sport && !it.date.isBefore(from) && !it.date.isAfter(to) }.sumOf { it.distanceMi ?: 0.0 }
-        fun minutes(from: LocalDate, to: LocalDate) = done.filter { it.sport == sport && !it.date.isBefore(from) && !it.date.isAfter(to) }.sumOf { it.durationMin }
+        fun miles(from: LocalDate, to: LocalDate) = done.filter { it.sport == sport && !it.date.isBefore(maxOf(from, startDate)) && !it.date.isAfter(to) }.sumOf { it.distanceMi ?: 0.0 }
+        fun minutes(from: LocalDate, to: LocalDate) = done.filter { it.sport == sport && !it.date.isBefore(maxOf(from, startDate)) && !it.date.isAfter(to) }.sumOf { it.durationMin }
         val weekEndur = endur.filter { PlanBuilder.monday(it.date) == monday && it.kind != WorkoutKind.Race }
         val weeks = endur.groupBy { it.week }.toSortedMap().map { (w, l) ->
             val m = firstMonday.plusWeeks(w.toLong())
