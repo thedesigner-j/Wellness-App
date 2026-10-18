@@ -30,7 +30,66 @@ data class WorkoutEntity(
     val exerciseType: Int,
     val title: String?,
     val source: String,
+    /** Average / max heart rate during the workout (Health Connect aggregate). */
+    val avgHr: Double? = null,
+    val maxHr: Double? = null,
+    val distanceM: Double? = null,
 )
+
+/** A race plan (SPEC §8). Plans chain in sequence by race date. */
+@Entity(tableName = "plans")
+data class PlanEntity(
+    @PrimaryKey(autoGenerate = true) val id: Long = 0,
+    val raceType: String,
+    val raceDate: Long,
+    val startDate: Long,
+    val goalMin: Int?,
+    /** Days, long day and strength days as DayOfWeek values, comma-separated. */
+    val days: String,
+    val longDay: Int,
+    val strengthDays: String,
+    val weeklyMin: Int,
+    val createdAt: Long,
+)
+
+/** One planned session. Dates are epoch days. */
+@Entity(
+    tableName = "planned",
+    foreignKeys = [ForeignKey(entity = PlanEntity::class, parentColumns = ["id"], childColumns = ["planId"], onDelete = ForeignKey.CASCADE)],
+    indices = [Index("planId"), Index("date")],
+)
+data class PlannedEntity(
+    @PrimaryKey(autoGenerate = true) val id: Long = 0,
+    val planId: Long,
+    val date: Long,
+    val sport: String,
+    val kind: String,
+    val durationMin: Int,
+    val note: String,
+    val phase: String,
+    val week: Int,
+    /** Planned, Dropped, Moved, Swapped, Missed. */
+    val status: String = "Planned",
+)
+
+/** Log of rule-based plan changes, with what is needed to undo a swap. */
+@Entity(tableName = "adjustments", indices = [Index("sessionId")])
+data class AdjustmentEntity(
+    @PrimaryKey(autoGenerate = true) val id: Long = 0,
+    val sessionId: Long,
+    val timeMs: Long,
+    val kind: String,
+    val summary: String,
+    val reason: String,
+    val originalKind: String?,
+    val originalDurationMin: Int?,
+    val originalNote: String?,
+    val reverted: Boolean = false,
+)
+
+/** Fuel taken during a workout (gels, drinks…), in grams of carbs. */
+@Entity(tableName = "fuel", indices = [Index("workoutId")])
+data class FuelEntity(@PrimaryKey(autoGenerate = true) val id: Long = 0, val workoutId: String, val timeMs: Long, val label: String, val carbsG: Double)
 
 /** Weight (lb) and body-fat (%) readings. */
 @Entity(tableName = "body", indices = [Index("timeMs")])
@@ -213,6 +272,23 @@ interface AppDao {
     @Query("DELETE FROM sleep WHERE source = 'sample'") suspend fun clearSampleSleep()
     @Query("DELETE FROM readings WHERE source = 'sample'") suspend fun clearSampleReadings()
     @Query("DELETE FROM labs WHERE sample = 1") suspend fun clearSampleLabs()
+
+    @Insert suspend fun insertPlan(p: PlanEntity): Long
+    @Insert suspend fun insertPlanned(rows: List<PlannedEntity>)
+    @androidx.room.Update suspend fun updatePlanned(row: PlannedEntity)
+    @Query("DELETE FROM plans WHERE id = :id") suspend fun deletePlan(id: Long)
+    @Insert suspend fun insertAdjustment(a: AdjustmentEntity): Long
+    @androidx.room.Update suspend fun updateAdjustment(a: AdjustmentEntity)
+    @Insert suspend fun insertFuel(f: FuelEntity): Long
+    @Query("DELETE FROM fuel WHERE id = :id") suspend fun deleteFuel(id: Long)
+
+    @Query("SELECT * FROM plans ORDER BY raceDate") fun plans(): Flow<List<PlanEntity>>
+    @Query("SELECT * FROM planned ORDER BY date, id") fun planned(): Flow<List<PlannedEntity>>
+    @Query("SELECT * FROM planned ORDER BY date, id") suspend fun plannedNow(): List<PlannedEntity>
+    @Query("SELECT * FROM adjustments ORDER BY timeMs DESC") fun adjustments(): Flow<List<AdjustmentEntity>>
+    @Query("SELECT * FROM adjustments") suspend fun adjustmentsNow(): List<AdjustmentEntity>
+    @Query("SELECT * FROM fuel ORDER BY timeMs") fun fuel(): Flow<List<FuelEntity>>
+    @Query("SELECT * FROM workouts WHERE startMs >= :from ORDER BY startMs") suspend fun workoutsNow(from: Long): List<WorkoutEntity>
 }
 
 @Database(
@@ -220,11 +296,12 @@ interface AppDao {
         GlucoseEntity::class, StepsEntity::class, WorkoutEntity::class, BodyEntity::class,
         MealEntity::class, MealItemEntity::class, AiResultEntity::class, TargetEntity::class, SyncStateEntity::class,
         SleepEntity::class, ReadingEntity::class, LabEntity::class,
+        PlanEntity::class, PlannedEntity::class, AdjustmentEntity::class, FuelEntity::class,
     ],
-    version = 2,
+    version = 3,
     exportSchema = true,
-    // v2 only adds tables, so Room migrates automatically and Phase 1 data is kept.
-    autoMigrations = [androidx.room.AutoMigration(from = 1, to = 2)],
+    // Each version only adds tables or nullable columns, so Room migrates automatically and keeps data.
+    autoMigrations = [androidx.room.AutoMigration(from = 1, to = 2), androidx.room.AutoMigration(from = 2, to = 3)],
 )
 abstract class AppDatabase : RoomDatabase() {
     abstract fun dao(): AppDao

@@ -1,6 +1,11 @@
 package com.javon.healthdash.data
 
+import com.javon.healthdash.calc.DurationBucket
+import com.javon.healthdash.calc.FuelRange
+import com.javon.healthdash.calc.FuelTable
+import com.javon.healthdash.calc.Intensity
 import com.javon.healthdash.calc.Targets
+import com.javon.healthdash.calc.TrainingRules
 import com.javon.healthdash.data.db.AppDao
 import com.javon.healthdash.data.db.TargetEntity
 import kotlinx.coroutines.flow.Flow
@@ -31,7 +36,26 @@ class TargetsRepository(private val dao: AppDao) {
         TargetDef("walkWindowMin", "Walk window", "min after meal", 45.0, "Detection"),
         TargetDef("unloggedRise", "Unlogged meal rise", "mg/dL in 30 min", 30.0, "Detection"),
         TargetDef("stepGoal", "Daily steps goal", "steps", 10000.0, "Detection"),
-    )
+        TargetDef("maxWeeklyIncrease", "Max weekly volume increase", "%", 10.0, "Training"),
+        TargetDef("lighterEvery", "Lighter week every", "weeks", 4.0, "Training"),
+        TargetDef("lighterFactor", "Lighter week volume", "% of last full week", 75.0, "Training"),
+        TargetDef("longIncreaseMax", "Long session growth cap", "min per week", 20.0, "Training"),
+        TargetDef("strengthPerWeek", "Strength sessions", "per week", 2.0, "Training"),
+        TargetDef("taperMarathon", "Taper · marathon", "weeks", 3.0, "Training"),
+        TargetDef("taperBike", "Taper · bike race", "weeks", 2.0, "Training"),
+        TargetDef("taperRelay", "Taper · relay", "weeks", 2.0, "Training"),
+        TargetDef("recoveryWeeks", "Recovery between races", "weeks", 2.0, "Training"),
+    ) + fuelDefs()
+
+    private fun fuelDefs(): List<TargetDef> = DurationBucket.entries.flatMap { b ->
+        Intensity.entries.flatMap { i ->
+            val r = FuelTable.DEFAULT.rows.getValue(b).getValue(i)
+            listOf(
+                TargetDef(fuelKey(b, i, "lo"), "${b.label} · ${i.name.lowercase()} · from", "g carbs/h", r.lo.toDouble(), "Fueling"),
+                TargetDef(fuelKey(b, i, "hi"), "${b.label} · ${i.name.lowercase()} · to", "g carbs/h", r.hi.toDouble(), "Fueling"),
+            )
+        }
+    }
 
     val values: Flow<Map<String, Double>> = dao.targets().map { rows ->
         val stored = rows.associate { it.key to it.value }
@@ -43,6 +67,29 @@ class TargetsRepository(private val dao: AppDao) {
     suspend fun set(key: String, value: Double) = dao.upsertTarget(TargetEntity(key, value))
 
     companion object {
+        fun fuelKey(b: DurationBucket, i: Intensity, end: String) = "fuel_${b.name}_${i.name}_$end"
+
+        fun toRules(v: Map<String, Double>) = TrainingRules(
+            maxWeeklyIncrease = (v["maxWeeklyIncrease"] ?: 10.0) / 100.0,
+            lighterEvery = (v["lighterEvery"] ?: 4.0).toInt().coerceIn(2, 8),
+            lighterFactor = (v["lighterFactor"] ?: 75.0) / 100.0,
+            longIncreaseMaxMin = (v["longIncreaseMax"] ?: 20.0).toInt(),
+            strengthPerWeek = (v["strengthPerWeek"] ?: 2.0).toInt(),
+            taperWeeksMarathon = (v["taperMarathon"] ?: 3.0).toInt(),
+            taperWeeksBike = (v["taperBike"] ?: 2.0).toInt(),
+            taperWeeksRelay = (v["taperRelay"] ?: 2.0).toInt(),
+            recoveryWeeks = (v["recoveryWeeks"] ?: 2.0).toInt(),
+        )
+
+        fun toFuelTable(v: Map<String, Double>) = FuelTable(
+            DurationBucket.entries.associateWith { b ->
+                Intensity.entries.associateWith { i ->
+                    val d = FuelTable.DEFAULT.rows.getValue(b).getValue(i)
+                    FuelRange((v[fuelKey(b, i, "lo")] ?: d.lo.toDouble()).toInt(), (v[fuelKey(b, i, "hi")] ?: d.hi.toDouble()).toInt())
+                }
+            },
+        )
+
         fun toTargets(v: Map<String, Double>) = Targets(
             tightLow = v["tightLow"] ?: 70.0,
             tightHigh = v["tightHigh"] ?: 140.0,

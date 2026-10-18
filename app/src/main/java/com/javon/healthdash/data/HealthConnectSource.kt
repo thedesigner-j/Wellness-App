@@ -14,6 +14,7 @@ import androidx.health.connect.client.records.SleepSessionRecord
 import androidx.health.connect.client.records.StepsRecord
 import androidx.health.connect.client.records.Vo2MaxRecord
 import androidx.health.connect.client.records.WeightRecord
+import androidx.health.connect.client.request.AggregateRequest
 import androidx.health.connect.client.request.ReadRecordsRequest
 import androidx.health.connect.client.time.TimeRangeFilter
 import com.javon.healthdash.data.db.AppDao
@@ -27,6 +28,14 @@ import com.javon.healthdash.data.db.WorkoutEntity
 import java.time.Duration
 import java.time.Instant
 import kotlin.reflect.KClass
+
+/** Health Connect exercise type → plan sport (null = other activities, e.g. walking). */
+fun sportOf(exerciseType: Int): com.javon.healthdash.calc.Sport? = when (exerciseType) {
+    ExerciseSessionRecord.EXERCISE_TYPE_RUNNING, ExerciseSessionRecord.EXERCISE_TYPE_RUNNING_TREADMILL -> com.javon.healthdash.calc.Sport.Run
+    ExerciseSessionRecord.EXERCISE_TYPE_BIKING, ExerciseSessionRecord.EXERCISE_TYPE_BIKING_STATIONARY -> com.javon.healthdash.calc.Sport.Ride
+    ExerciseSessionRecord.EXERCISE_TYPE_STRENGTH_TRAINING, ExerciseSessionRecord.EXERCISE_TYPE_WEIGHTLIFTING -> com.javon.healthdash.calc.Sport.Strength
+    else -> null
+}
 
 /** The data types shown on the Data sources screen. */
 enum class DataType(val label: String) {
@@ -116,7 +125,18 @@ class HealthConnectSource(private val context: Context, private val dao: AppDao)
         }
         step<ExerciseSessionRecord>(DataType.Workouts) {
             val rows = readAll(ExerciseSessionRecord::class, start, now)
-            dao.upsertWorkouts(rows.map { WorkoutEntity(it.metadata.id, it.startTime.toEpochMilli(), it.endTime.toEpochMilli(), it.exerciseType, it.title, it.metadata.dataOrigin.packageName) })
+            dao.upsertWorkouts(
+                rows.map {
+                    // Average / max HR during the session, for zones and the workout detail screen.
+                    val hr = runCatching {
+                        client.aggregate(AggregateRequest(setOf(HeartRateRecord.BPM_AVG, HeartRateRecord.BPM_MAX), TimeRangeFilter.between(it.startTime, it.endTime)))
+                    }.getOrNull()
+                    WorkoutEntity(
+                        it.metadata.id, it.startTime.toEpochMilli(), it.endTime.toEpochMilli(), it.exerciseType, it.title, it.metadata.dataOrigin.packageName,
+                        avgHr = hr?.get(HeartRateRecord.BPM_AVG)?.toDouble(), maxHr = hr?.get(HeartRateRecord.BPM_MAX)?.toDouble(),
+                    )
+                },
+            )
             Triple(rows.count { it.endTime.toEpochMilli() >= dayAgo }, rows.maxOfOrNull { it.endTime.toEpochMilli() }, rows.map { it.metadata.dataOrigin.packageName }.toSet())
         }
         step<SleepSessionRecord>(DataType.Sleep) {

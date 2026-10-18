@@ -42,6 +42,7 @@ class AppContainer(context: Context) {
     val usda = UsdaClient(keys)
     val recognizer = FoodRecognizer(dao, keys, prefs)
     val photos = Photos(context)
+    val training = com.javon.healthdash.data.TrainingRepository(dao)
 
     /** Full sync on first run (90 days of history), then the last 3 days to pick up late data. */
     suspend fun syncNow() {

@@ -60,6 +60,7 @@ fun GlucoseChart(
     workouts: List<TimeWindow> = emptyList(),
     targets: Targets = Targets(),
     onMealClick: ((Long) -> Unit)? = null,
+    fuel: List<Long> = emptyList(),
 ) {
     val c = Theme.colors
     val measurer = rememberTextMeasurer()
@@ -98,6 +99,10 @@ fun GlucoseChart(
                 prev = p
             }
             drawPath(path, c.chartLine, style = Stroke(Dimens.strokeChartLine.toPx(), cap = StrokeCap.Round, join = StrokeJoin.Round))
+            for (f in fuel.filter { it in window }) {
+                drawCircle(c.bgSurface, 6.dp.toPx(), Offset(x(f), size.height - pinSpace / 2))
+                drawCircle(c.chartFuelMark, 4.5.dp.toPx(), Offset(x(f), size.height - pinSpace / 2))
+            }
             for (m in meals.filter { it in window }) drawMealPin(Offset(x(m), size.height - pinSpace / 2), c.bgNeutral, c.borderAccent, c.iconPrimary, mealPainter)
         }
         if (ticks.isNotEmpty()) {

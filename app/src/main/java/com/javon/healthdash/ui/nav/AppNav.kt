@@ -35,7 +35,13 @@ import com.javon.healthdash.ui.screens.OnboardingScreen
 import com.javon.healthdash.ui.screens.SettingsScreen
 import com.javon.healthdash.ui.screens.TargetsScreen
 import com.javon.healthdash.ui.screens.TodayScreen
-import com.javon.healthdash.ui.screens.TrainingPlaceholderScreen
+import com.javon.healthdash.ui.screens.AdjustmentsScreen
+import com.javon.healthdash.ui.screens.ExportScreen
+import com.javon.healthdash.ui.screens.PlanBuilderScreen
+import com.javon.healthdash.ui.screens.RacePlansScreen
+import com.javon.healthdash.ui.screens.TrainingScreen
+import com.javon.healthdash.ui.screens.WeekViewScreen
+import com.javon.healthdash.ui.screens.WorkoutDetailScreen
 import com.javon.healthdash.ui.screens.logMealGraph
 import kotlinx.coroutines.flow.SharingStarted
 import kotlinx.coroutines.flow.StateFlow
@@ -67,6 +73,15 @@ object Routes {
     const val METRIC = "trends/{metric}/{days}"
     const val DAY = "day/{epochDay}"
 
+    const val WORKOUT = "workout/{id}"
+    const val PLANS = "plans"
+    const val PLAN_NEW = "plans/new"
+    const val WEEK = "week/{epochDay}"
+    const val ADJUSTMENTS = "adjustments"
+    const val EXPORT = "export"
+
+    fun workout(id: String) = "workout/${android.net.Uri.encode(id)}"
+    fun week(monday: java.time.LocalDate) = "week/${monday.toEpochDay()}"
     fun metric(m: TrendMetric, days: Int) = "trends/${m.name}/$days"
     fun day(d: java.time.LocalDate) = "day/${d.toEpochDay()}"
 
@@ -121,7 +136,28 @@ fun AppNav(container: AppContainer) {
         composable(Routes.DAY, arguments = listOf(navArgument("epochDay") { type = NavType.LongType })) { e ->
             DayContextScreen(state, java.time.LocalDate.ofEpochDay(e.arguments!!.getLong("epochDay")), onBack = back, onMeal = { nav.navigate(Routes.meal(it)) })
         }
-        composable(Routes.TRAINING) { TrainingPlaceholderScreen(state, onTab) }
+        composable(Routes.TRAINING) {
+            TrainingScreen(
+                container, state, onTab,
+                onWorkout = { nav.navigate(Routes.workout(it)) }, onPlans = { nav.navigate(Routes.PLANS) },
+                onWeek = { nav.navigate(Routes.week(it)) }, onAdjustments = { nav.navigate(Routes.ADJUSTMENTS) },
+            )
+        }
+        composable(Routes.WORKOUT, arguments = listOf(navArgument("id") { type = NavType.StringType })) { e ->
+            WorkoutDetailScreen(container, state, android.net.Uri.decode(e.arguments!!.getString("id")!!), onBack = back)
+        }
+        composable(Routes.PLANS) {
+            RacePlansScreen(container, state, onBack = back, onNew = { nav.navigate(Routes.PLAN_NEW) }, onWeek = { nav.navigate(Routes.week(it)) }, onExport = { nav.navigate(Routes.EXPORT) })
+        }
+        composable(Routes.PLAN_NEW) {
+            PlanBuilderScreen(container, state, onClose = back, onCreated = { nav.navigate(Routes.TRAINING) { popUpTo(Routes.TRAINING) } })
+        }
+        composable(Routes.WEEK, arguments = listOf(navArgument("epochDay") { type = NavType.LongType })) { e ->
+            WeekViewScreen(container, state, java.time.LocalDate.ofEpochDay(e.arguments!!.getLong("epochDay")), onBack = back,
+                onWeek = { nav.navigate(Routes.week(it)) { popUpTo(Routes.WEEK) { inclusive = true } } })
+        }
+        composable(Routes.ADJUSTMENTS) { AdjustmentsScreen(container, state, onBack = back) }
+        composable(Routes.EXPORT) { ExportScreen(container, state, onBack = back) }
         composable(Routes.MORE) { MoreScreen(onTab, onSettings = { nav.navigate(Routes.SETTINGS) }, onSources = { nav.navigate(Routes.SOURCES) }, onTrends = { nav.navigate(Routes.TRENDS) }) }
         composable(Routes.MEALS, arguments = listOf(navArgument("tab") { type = NavType.IntType; defaultValue = 0 })) { entry ->
             MealsScreen(

@@ -97,7 +97,7 @@ fun SettingsScreen(container: AppContainer, onTab: (Tab) -> Unit, onBack: () -> 
     ScreenFrame(topBar = { SmallTopBar("Settings", onBack) }, bottomBar = { BottomNav(Tab.More) { onTab(it) } }) {
         RowGroup {
             ListRow("Data sources", subtitle = "Health Connect · glucose source", icon = AppIcons.sync, onClick = onSources)
-            ListRow("Targets", subtitle = "Ranges, windows, thresholds", icon = AppIcons.trends, onClick = onTargets)
+            ListRow("Targets & training rules", subtitle = "Ranges, windows, plan rules, fueling table", icon = AppIcons.trends, onClick = onTargets)
         }
         RowGroup {
             ListRow("API keys & AI", subtitle = "Claude · USDA · ${prefs.claudeModel}", icon = AppIcons.lab, onClick = onKeys)
@@ -211,20 +211,3 @@ fun TargetsScreen(container: AppContainer, state: DashboardState, onBack: () -> 
     }
 }
 
-/** Training tab — plan builder arrives in Phase 3; Phase 1 lists workouts read from Health Connect. */
-@Composable
-fun TrainingPlaceholderScreen(state: DashboardState, onTab: (Tab) -> Unit) {
-    ScreenFrame(topBar = { LargeTopBar("Training", "From Garmin via Health Connect") }, bottomBar = { BottomNav(Tab.Training) { onTab(it) } }) {
-        SectionHeader("Recent workouts")
-        if (state.workouts.isEmpty()) {
-            EmptyState("No workouts yet", "Turn on Health Connect sharing for workouts in Garmin Connect.")
-        } else {
-            RowGroup {
-                state.workouts.sortedByDescending { it.startMs }.take(12).forEach { w ->
-                    ListRow(w.title ?: "Workout", subtitle = "${Fmt.dayLabel(w.startMs, state.nowMs)} · ${Fmt.time(w.startMs)} · ${(w.endMs - w.startMs) / 60_000} min", icon = AppIcons.run, chevron = false)
-                }
-            }
-        }
-        EmptyState("Coming in Phase 3", "Calendar, race plan builder, glucose overlaid on each workout, and fueling notes.")
-    }
-}
