@@ -102,6 +102,8 @@ data class PlannedSession(
     /** Set for recurring sessions ("Run club"). */
     val name: String? = null,
     val distanceMi: Double? = null,
+    /** Workout structure and target paces, e.g. "1.5 mi easy · 6 × 800 m @ 7:33/mi · 1 mi easy". */
+    val detail: String? = null,
 ) {
     val intensity get() = kind.intensity
 }

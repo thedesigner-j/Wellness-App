@@ -32,7 +32,7 @@ import java.time.ZoneId
 import kotlinx.coroutines.sync.Mutex
 import kotlinx.coroutines.sync.withLock
 
-fun PlannedEntity.toSession() = PlannedSession(LocalDate.ofEpochDay(date), Sport.valueOf(sport), WorkoutKind.valueOf(kind), durationMin, note, name, distanceMi)
+fun PlannedEntity.toSession() = PlannedSession(LocalDate.ofEpochDay(date), Sport.valueOf(sport), WorkoutKind.valueOf(kind), durationMin, note, name, distanceMi, detail)
 
 fun PlanEntity.inputs() = PlanInputs(
     race = RaceType.valueOf(raceType),
@@ -55,8 +55,8 @@ class TrainingRepository(private val dao: AppDao) {
     val fuel = dao.fuel()
     private val lock = Mutex()
 
-    suspend fun create(inputs: PlanInputs, rules: TrainingRules, fuel: FuelTable): PlanResult {
-        val result = PlanBuilder.generate(inputs, rules, fuel)
+    /** Saves a generated plan (from [PlanBuilder] or the distance-based [com.javon.healthdash.calc.RunPlanBuilder]). */
+    suspend fun create(inputs: PlanInputs, result: PlanResult): PlanResult {
         if (result !is PlanResult.Ok) return result
         val id = dao.insertPlan(
             PlanEntity(
@@ -66,7 +66,7 @@ class TrainingRepository(private val dao: AppDao) {
             ),
         )
         dao.insertPlanned(result.weeks.flatMap { w ->
-            w.sessions.map { s -> PlannedEntity(planId = id, date = s.date.toEpochDay(), sport = s.sport.name, kind = s.kind.name, durationMin = s.durationMin, note = s.note, phase = w.phase.name, week = w.index, name = s.name, distanceMi = s.distanceMi) }
+            w.sessions.map { s -> PlannedEntity(planId = id, date = s.date.toEpochDay(), sport = s.sport.name, kind = s.kind.name, durationMin = s.durationMin, note = s.note, phase = w.phase.name, week = w.index, name = s.name, distanceMi = s.distanceMi, detail = s.detail) }
         })
         return result
     }

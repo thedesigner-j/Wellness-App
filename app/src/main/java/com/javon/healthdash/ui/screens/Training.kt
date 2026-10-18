@@ -111,8 +111,8 @@ fun sessionTitle(e: PlannedEntity): String {
         kind.recurring -> listOfNotNull(e.name ?: "Recurring session", e.distanceMi?.let { "${Fmt.amount(it)} mi" }, "${e.durationMin} min",
             when (kind) { WorkoutKind.ClubHard -> "hard"; WorkoutKind.ClubSteady -> "steady"; else -> "easy" }).joinToString(" · ")
         sport == Sport.Strength -> "Strength · ${e.durationMin} min"
-        kind == WorkoutKind.Race -> "Race day"
-        else -> "${kind.label} ${if (sport == Sport.Ride) "ride" else "run"} · ${e.durationMin} min"
+        kind == WorkoutKind.Race -> "Race day" + (e.distanceMi?.let { " · ${Fmt.one(it)} mi" } ?: "")
+        else -> "${kind.label} ${if (sport == Sport.Ride) "ride" else "run"} · " + (e.distanceMi?.let { "${Fmt.amount(it)} mi" } ?: "${e.durationMin} min")
     }
 }
 
@@ -133,7 +133,7 @@ fun sessionStatus(e: PlannedEntity, s: DashboardState, zone: ZoneId): WorkoutCar
 }
 
 fun sessionDetail(e: PlannedEntity, zones: List<HrZone>): String =
-    listOfNotNull(e.phase.lowercase().replaceFirstChar(Char::uppercase) + " week", Zones.forKind(WorkoutKind.valueOf(e.kind), zones)).joinToString(" · ")
+    listOfNotNull(e.detail, (if (e.distanceMi != null && e.sport != Sport.Strength.name) "≈ ${e.durationMin / 60}:${"%02d".format(e.durationMin % 60)}" else null), Zones.forKind(WorkoutKind.valueOf(e.kind), zones), e.phase.lowercase().replaceFirstChar(Char::uppercase) + " week").joinToString(" · ")
 
 data class RecentVolume(val weeklyMin: Int, val workouts: Int, val days: Int, val sources: Set<String>)
 
@@ -151,6 +151,38 @@ fun recentVolume(s: DashboardState): RecentVolume {
 }
 
 fun recentWeeklyMinutes(s: DashboardState, zone: ZoneId): Int = recentVolume(s).weeklyMin
+
+/** Last 30 days of Garmin runs that have a distance → weekly miles, longest run, typical pace. */
+fun runFitness(s: DashboardState): com.javon.healthdash.calc.RunFitness? {
+    val runs = s.workouts.filter { sportOf(it.exerciseType) == Sport.Run && (it.distanceM ?: 0.0) > 0 }
+        .map { com.javon.healthdash.calc.RunSample(it.startMs, it.distanceM!! / com.javon.healthdash.calc.METERS_PER_MI, ((it.endMs - it.startMs) / 1000).toInt()) }
+    val firstData = listOfNotNull(s.workouts.minOfOrNull { it.startMs }, s.steps.minOfOrNull { it.startMs }).minOrNull() ?: s.nowMs
+    val historyDays = ((s.nowMs - firstData) / (24 * 3_600_000L)).toInt()
+    return com.javon.healthdash.calc.Fitness.fromRuns(runs, s.nowMs, 30, historyDays)
+}
+
+/** "9:45" → 585 seconds. */
+fun parsePace(text: String): Int? = text.trim().split(":").takeIf { it.size == 2 }?.let { (m, s) ->
+    val mm = m.toIntOrNull(); val ss = s.toIntOrNull()
+    if (mm == null || ss == null || ss !in 0..59 || mm !in 4..20) null else mm * 60 + ss
+}
+
+/** Asks for any Health Connect permissions added since setup (e.g. distance for run pace). */
+@Composable
+fun HealthPermissionNotice(container: AppContainer, onGranted: () -> Unit = {}) {
+    var granted by remember { mutableStateOf<Set<String>?>(null) }
+    val scope = rememberCoroutineScope()
+    val launcher = androidx.activity.compose.rememberLauncherForActivityResult(androidx.health.connect.client.PermissionController.createRequestPermissionResultContract()) { g ->
+        granted = g
+        scope.launch { runCatching { container.syncNow() }; onGranted() }
+    }
+    LaunchedEffect(Unit) { granted = container.health.granted() }
+    val distance = androidx.health.connect.client.permission.HealthPermission.getReadPermission(androidx.health.connect.client.records.DistanceRecord::class)
+    if (container.health.available && granted != null && distance !in granted!!) {
+        Notice(NoticeType.Info, "Allow run distance", "Plans use the distance and pace of your last 30 days of Garmin runs. Health Connect needs one more permission for that.",
+            action = "Allow", onAction = { launcher.launch(container.health.permissions) })
+    }
+}
 
 /** Runs the missed-session and readiness rules whenever training data changes. */
 @Composable
@@ -203,6 +235,7 @@ fun TrainingScreen(
     }
 
     ScreenFrame(topBar = { LargeTopBar("Training", overline) }, bottomBar = { BottomNav(Tab.Training) { onTab(it) } }) {
+        HealthPermissionNotice(container)
         CalendarMonth(
             month, today,
             stateOf = { d ->

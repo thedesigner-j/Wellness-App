@@ -5,6 +5,7 @@ import androidx.health.connect.client.HealthConnectClient
 import androidx.health.connect.client.permission.HealthPermission
 import androidx.health.connect.client.records.BloodGlucoseRecord
 import androidx.health.connect.client.records.BodyFatRecord
+import androidx.health.connect.client.records.DistanceRecord
 import androidx.health.connect.client.records.ExerciseSessionRecord
 import androidx.health.connect.client.records.HeartRateRecord
 import androidx.health.connect.client.records.HeartRateVariabilityRmssdRecord
@@ -59,6 +60,7 @@ class HealthConnectSource(private val context: Context, private val dao: AppDao)
         HealthPermission.getReadPermission(BloodGlucoseRecord::class),
         HealthPermission.getReadPermission(StepsRecord::class),
         HealthPermission.getReadPermission(ExerciseSessionRecord::class),
+        HealthPermission.getReadPermission(DistanceRecord::class),
         HealthPermission.getReadPermission(HeartRateRecord::class),
         HealthPermission.getReadPermission(RestingHeartRateRecord::class),
         HealthPermission.getReadPermission(HeartRateVariabilityRmssdRecord::class),
@@ -132,9 +134,13 @@ class HealthConnectSource(private val context: Context, private val dao: AppDao)
                     val hr = runCatching {
                         client.aggregate(AggregateRequest(setOf(HeartRateRecord.BPM_AVG, HeartRateRecord.BPM_MAX), TimeRangeFilter.between(it.startTime, it.endTime)))
                     }.getOrNull()
+                    // Distance for runs and rides (pace and weekly miles for plans).
+                    val dist = runCatching {
+                        client.aggregate(AggregateRequest(setOf(DistanceRecord.DISTANCE_TOTAL), TimeRangeFilter.between(it.startTime, it.endTime)))[DistanceRecord.DISTANCE_TOTAL]?.inMeters
+                    }.getOrNull()
                     WorkoutEntity(
                         it.metadata.id, it.startTime.toEpochMilli(), it.endTime.toEpochMilli(), it.exerciseType, it.title, it.metadata.dataOrigin.packageName,
-                        avgHr = hr?.get(HeartRateRecord.BPM_AVG)?.toDouble(), maxHr = hr?.get(HeartRateRecord.BPM_MAX)?.toDouble(),
+                        avgHr = hr?.get(HeartRateRecord.BPM_AVG)?.toDouble(), maxHr = hr?.get(HeartRateRecord.BPM_MAX)?.toDouble(), distanceM = dist?.takeIf { d -> d > 0 },
                     )
                 },
             )
