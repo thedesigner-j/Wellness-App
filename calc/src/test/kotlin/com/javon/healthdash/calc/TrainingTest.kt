@@ -78,6 +78,50 @@ class TrainingTest {
         assertThat(weeks.count { it.phase == Phase.Taper }).isEqualTo(2)
     }
 
+    private val runClub = FixedSession(WEDNESDAY, Sport.Run, "Run club", 6.0, 55, Intensity.Hard)
+
+    @Test fun planIsBuiltAroundRecurringRunClub() {
+        // User also picked Wednesday as long day: the club keeps Wednesday, long moves to a free day.
+        val inputs = marathon.copy(fixed = listOf(runClub), longDay = SUNDAY)
+        val weeks = (PlanBuilder.generate(inputs) as PlanResult.Ok).weeks
+        weeks.dropLast(1).forEach { w ->
+            val club = w.sessions.single { it.kind.recurring }
+            assertThat(club.date.dayOfWeek).isEqualTo(WEDNESDAY)
+            assertThat(club.durationMin).isEqualTo(55)
+            assertThat(club.name).isEqualTo("Run club")
+            assertThat(club.distanceMi).isEqualTo(6.0)
+            // Hard club in normal weeks, easy effort in taper.
+            assertThat(club.kind).isEqualTo(if (w.phase == Phase.Taper) WorkoutKind.ClubEasy else WorkoutKind.ClubHard)
+            // No other hard session the day before or after a hard club night.
+            if (club.kind == WorkoutKind.ClubHard) {
+                w.sessions.filter { it.intensity == Intensity.Hard && !it.kind.recurring }.forEach {
+                    assertThat(it.date.dayOfWeek).isNoneOf(TUESDAY, THURSDAY, WEDNESDAY)
+                }
+                // It counts as a hard day: base weeks then need no extra hard session.
+                if (w.phase == Phase.Base) assertThat(w.sessions.count { it.intensity == Intensity.Hard }).isEqualTo(1)
+            }
+            // Club minutes count toward the week: endurance total stays close to the target.
+            assertThat(w.enduranceMin.toDouble()).isWithin(w.targetMin * 0.25 + 20).of(w.targetMin.toDouble())
+        }
+        // Race Sunday: club Wednesday is 4 days before, so it stays (easy).
+        assertThat(weeks.last().sessions.single { it.kind.recurring }.kind).isEqualTo(WorkoutKind.ClubEasy)
+    }
+
+    @Test fun clubDayIsNeverTheLongDay() {
+        val inputs = marathon.copy(fixed = listOf(runClub.copy(day = SUNDAY)), longDay = SUNDAY)
+        val weeks = (PlanBuilder.generate(inputs) as PlanResult.Ok).weeks
+        weeks.dropLast(1).forEach { w -> assertThat(w.sessions.single { it.kind == WorkoutKind.Long }.date.dayOfWeek).isNotEqualTo(SUNDAY) }
+    }
+
+    @Test fun recurringSessionRules() {
+        val club = PlannedSession(start.plusDays(2), Sport.Run, WorkoutKind.ClubHard, 55, name = "Run club")
+        val a = Adjustments.readiness(club, 330, null, null)!!
+        assertThat(a.to!!.kind).isEqualTo(WorkoutKind.ClubEasy)
+        assertThat(a.to!!.durationMin).isEqualTo(55)
+        assertThat(a.reason).endsWith("go, but run it at an easy effort")
+        assertThat(Adjustments.missed(club, listOf(PlannedSession(start.plusDays(3), Sport.Run, WorkoutKind.Easy, 40))).kind).isEqualTo(AdjustmentKind.Dropped)
+    }
+
     @Test fun invalidPlans() {
         assertThat(PlanBuilder.generate(marathon.copy(raceDate = start.plusWeeks(3)))).isInstanceOf(PlanResult.Invalid::class.java)
         assertThat(PlanBuilder.generate(marathon.copy(days = setOf(SUNDAY, SATURDAY)))).isInstanceOf(PlanResult.Invalid::class.java)

@@ -108,6 +108,8 @@ fun sessionTitle(e: PlannedEntity): String {
     val kind = WorkoutKind.valueOf(e.kind)
     val sport = Sport.valueOf(e.sport)
     return when {
+        kind.recurring -> listOfNotNull(e.name ?: "Recurring session", e.distanceMi?.let { "${Fmt.amount(it)} mi" }, "${e.durationMin} min",
+            when (kind) { WorkoutKind.ClubHard -> "hard"; WorkoutKind.ClubSteady -> "steady"; else -> "easy" }).joinToString(" · ")
         sport == Sport.Strength -> "Strength · ${e.durationMin} min"
         kind == WorkoutKind.Race -> "Race day"
         else -> "${kind.label} ${if (sport == Sport.Ride) "ride" else "run"} · ${e.durationMin} min"

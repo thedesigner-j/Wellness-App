@@ -91,13 +91,15 @@ fun MoreScreen(onTab: (Tab) -> Unit, onSettings: () -> Unit, onSources: () -> Un
 }
 
 @Composable
-fun SettingsScreen(container: AppContainer, onTab: (Tab) -> Unit, onBack: () -> Unit, onSources: () -> Unit, onKeys: () -> Unit, onTargets: () -> Unit) {
+fun SettingsScreen(container: AppContainer, onTab: (Tab) -> Unit, onBack: () -> Unit, onSources: () -> Unit, onKeys: () -> Unit, onTargets: () -> Unit, onRecurring: () -> Unit) {
+    val recurring by container.prefs.recurring.collectAsStateWithLifecycle()
     val prefs by container.prefs.state.collectAsStateWithLifecycle()
     val scope = rememberCoroutineScope()
     ScreenFrame(topBar = { SmallTopBar("Settings", onBack) }, bottomBar = { BottomNav(Tab.More) { onTab(it) } }) {
         RowGroup {
             ListRow("Data sources", subtitle = "Health Connect · glucose source", icon = AppIcons.sync, onClick = onSources)
             ListRow("Targets & training rules", subtitle = "Ranges, windows, plan rules, fueling table", icon = AppIcons.trends, onClick = onTargets)
+            ListRow("Recurring sessions", subtitle = recurring.takeIf { it.isNotEmpty() }?.joinToString { it.name } ?: "e.g. your weekly run club", icon = AppIcons.calendar, onClick = onRecurring)
         }
         RowGroup {
             ListRow("API keys & AI", subtitle = "Claude · USDA · ${prefs.claudeModel}", icon = AppIcons.lab, onClick = onKeys)

@@ -22,7 +22,32 @@ enum class WorkoutKind(val label: String, val intensity: Intensity) {
     DoubleDay("Double day", Intensity.Moderate),
     Strength("Strength", Intensity.Easy),
     Race("Race", Intensity.Hard),
+    /** A recurring session the user already does (e.g. a weekly run club). */
+    ClubEasy("Recurring", Intensity.Easy),
+    ClubSteady("Recurring", Intensity.Moderate),
+    ClubHard("Recurring", Intensity.Hard);
+
+    val recurring get() = this == ClubEasy || this == ClubSteady || this == ClubHard
+
+    companion object {
+        fun recurring(i: Intensity) = when (i) { Intensity.Easy -> ClubEasy; Intensity.Moderate -> ClubSteady; Intensity.Hard -> ClubHard }
+    }
 }
+
+/**
+ * A session the user already does every week at a set distance (SPEC-adjacent: the plan is built
+ * around it). It stays on its day, counts toward weekly volume, and a hard one counts as a hard day.
+ */
+data class FixedSession(
+    val day: DayOfWeek,
+    val sport: Sport,
+    val name: String,
+    val distanceMi: Double?,
+    val durationMin: Int,
+    val intensity: Intensity,
+    /** Keep attending during taper and race week (at an easy effort). */
+    val keepInTaper: Boolean = true,
+)
 
 enum class Phase { Base, Build, Peak, Taper, Race, Recovery }
 
@@ -65,6 +90,7 @@ data class PlanInputs(
     val days: Set<DayOfWeek>,
     val longDay: DayOfWeek,
     val strengthDays: Set<DayOfWeek>,
+    val fixed: List<FixedSession> = emptyList(),
 )
 
 data class PlannedSession(
@@ -73,6 +99,9 @@ data class PlannedSession(
     val kind: WorkoutKind,
     val durationMin: Int,
     val note: String = "",
+    /** Set for recurring sessions ("Run club"). */
+    val name: String? = null,
+    val distanceMi: Double? = null,
 ) {
     val intensity get() = kind.intensity
 }
@@ -136,13 +165,13 @@ object PlanBuilder {
         return out
     }
 
-    /** Hard days: not the long day, not next to the long day, not next to each other. */
-    fun hardDays(available: Set<DayOfWeek>, longDay: DayOfWeek, count: Int): List<DayOfWeek> {
+    /** Hard days: not the long day, not next to the long day or [avoidNear] (e.g. a hard run club), not next to each other. */
+    fun hardDays(available: Set<DayOfWeek>, longDay: DayOfWeek, count: Int, avoidNear: Set<DayOfWeek> = emptySet()): List<DayOfWeek> {
         val chosen = mutableListOf<DayOfWeek>()
         fun adjacent(a: DayOfWeek, b: DayOfWeek) = a == b || a.plus(1) == b || a.minus(1) == b
         for (d in hardPreference) {
             if (chosen.size >= count) break
-            if (d !in available || adjacent(d, longDay)) continue
+            if (d !in available || adjacent(d, longDay) || avoidNear.any { adjacent(it, d) }) continue
             if (chosen.any { adjacent(it, d) }) continue
             chosen += d
         }
@@ -156,7 +185,10 @@ object PlanBuilder {
         val taper = rules.taperWeeks(inputs.race)
         if (inputs.raceDate.isBefore(inputs.startDate)) return PlanResult.Invalid("Race date is before the plan start")
         if (weeks < taper + 3) return PlanResult.Invalid("Need at least ${taper + 3} weeks before the race for base, taper and race week")
-        if (inputs.days.size < 3) return PlanResult.Invalid("Pick at least 3 training days")
+        val fixedDays = inputs.fixed.map { it.day }.toSet()
+        val days = inputs.days + fixedDays
+        if (days.size < 3) return PlanResult.Invalid("Pick at least 3 training days")
+        if ((days - fixedDays).isEmpty()) return PlanResult.Invalid("Leave at least one day free for the long session")
 
         val phases = phases(weeks, taper)
         val vols = volumes(phases, inputs.currentWeeklyMin, inputs.race, rules)
@@ -170,22 +202,39 @@ object PlanBuilder {
             val (vol, lighter) = vols[w]
             fun date(d: DayOfWeek) = start.plusDays((d.value - 1).toLong())
             val sessions = mutableListOf<PlannedSession>()
-            fun add(d: DayOfWeek, kind: WorkoutKind, min: Int, s: Sport = sport) {
+            fun add(d: DayOfWeek, kind: WorkoutKind, min: Int, s: Sport = sport, name: String? = null, distanceMi: Double? = null) {
                 val dt = date(d)
                 if (dt.isBefore(inputs.startDate)) return
-                sessions += PlannedSession(dt, s, kind, min, if (s == Sport.Strength) "" else fuel.note(min, kind.intensity))
+                sessions += PlannedSession(dt, s, kind, min, if (s == Sport.Strength) "" else fuel.note(min, kind.intensity), name, distanceMi)
+            }
+            /** Recurring sessions; in taper and race week they stay at an easy effort (or are skipped if the user said so). */
+            fun addFixed(onlyBefore: java.time.LocalDate? = null): List<FixedSession> {
+                val easyOnly = phase == Phase.Taper || phase == Phase.Race
+                val kept = inputs.fixed.filter { f ->
+                    (!easyOnly || f.keepInTaper) && (onlyBefore == null || !date(f.day).isAfter(onlyBefore))
+                }
+                kept.forEach { f ->
+                    add(f.day, WorkoutKind.recurring(if (easyOnly) Intensity.Easy else f.intensity), f.durationMin, f.sport, f.name, f.distanceMi)
+                }
+                return kept
             }
 
             if (phase == Phase.Race) {
                 val rd = inputs.raceDate.dayOfWeek
-                val shake = inputs.days.filter { it != rd && it.value < rd.value }.sortedBy { it.value }.takeLast(2)
+                // Recurring sessions only if at least 2 days before the race.
+                val club = addFixed(onlyBefore = inputs.raceDate.minusDays(2))
+                val shake = days.filter { it != rd && it.value < rd.value && it !in fixedDays }.sortedBy { it.value }.takeLast(2 - club.size.coerceAtMost(1))
                 shake.forEach { add(it, WorkoutKind.Easy, (vol / 2.0).roundToInt().coerceIn(20, 45)) }
                 sessions += PlannedSession(inputs.raceDate, sport, WorkoutKind.Race, inputs.goalMin ?: inputs.race.defaultRaceMin, fuel.note(inputs.goalMin ?: inputs.race.defaultRaceMin, Intensity.Hard))
                 out += PlanWeek(w, start, phase, vol, false, sessions.sortedBy { it.date })
                 continue
             }
 
-            val longDay = if (inputs.longDay in inputs.days) inputs.longDay else inputs.days.maxBy { it.value }
+            val club = addFixed()
+            val clubMin = club.filter { it.sport != Sport.Strength }.sumOf { it.durationMin }
+            val hardClubDays = if (phase == Phase.Taper) emptySet() else club.filter { it.intensity == Intensity.Hard }.map { it.day }.toSet()
+            val free = days - fixedDays
+            val longDay = if (inputs.longDay in free) inputs.longDay else free.maxBy { it.value }
             val longTarget = (vol * inputs.race.longShare).roundToInt()
             val long = when {
                 lighter || phase == Phase.Taper || prevLong == 0 -> longTarget
@@ -195,8 +244,9 @@ object PlanBuilder {
             add(longDay, WorkoutKind.Long, long)
 
             val hardCount = when (phase) { Phase.Base -> 1; Phase.Build, Phase.Peak -> if (lighter) 1 else 2; else -> 1 }
-            val hard = hardDays(inputs.days - longDay, longDay, hardCount)
-            var used = long
+            // A hard recurring session counts as one of the week's hard days.
+            val hard = hardDays(free - longDay, longDay, (hardCount - hardClubDays.size).coerceAtLeast(0), hardClubDays)
+            var used = long + clubMin
             hard.forEachIndexed { i, d ->
                 val kind = if (i == 0) WorkoutKind.Tempo else WorkoutKind.Intervals
                 val min = (vol * (if (kind == WorkoutKind.Tempo) 0.15 else 0.12)).roundToInt().coerceIn(25, 75)
@@ -204,7 +254,7 @@ object PlanBuilder {
                 used += min
             }
 
-            var easyDays = (inputs.days - longDay - hard.toSet()).sortedBy { it.value }
+            var easyDays = (free - longDay - hard.toSet()).sortedBy { it.value }
             // Relay: back-to-back long sessions and one double day in peak weeks.
             if (inputs.race == RaceType.Relay200 && phase == Phase.Peak) {
                 val next = longDay.plus(1)
@@ -264,6 +314,14 @@ object Adjustments {
             if (lowHrv) add("HRV ${hrv!!.roundToInt()} ms is below your ${hrvBaseline!!.roundToInt()} ms baseline")
             if (shortSleep) add("sleep was ${sleepMin!! / 60} h ${sleepMin % 60} m")
         }
+        if (session.kind.recurring) {
+            // A set-distance session with a group: still go, at an easy effort.
+            return Adjustment(
+                AdjustmentKind.SwapToEasy, session,
+                session.copy(kind = WorkoutKind.ClubEasy, note = fuel.note(session.durationMin, Intensity.Easy)),
+                reasons.joinToString(" and ").replaceFirstChar(Char::uppercase) + " — go, but run it at an easy effort",
+            )
+        }
         val easyMin = (session.durationMin * 0.75).roundToInt()
         return Adjustment(
             AdjustmentKind.SwapToEasy, session,
@@ -284,6 +342,8 @@ object Adjustments {
         fun within(days: Long) = after.filter { !it.date.isAfter(missed.date.plusDays(days)) && it.sport != Sport.Strength }
         fun hardNear(d: LocalDate) = after.any { (it.intensity == Intensity.Hard || it.kind == WorkoutKind.Long) && kotlin.math.abs(ChronoUnit.DAYS.between(it.date, d)) <= 1 && it.date != d }
         return when {
+            missed.kind.recurring ->
+                Adjustment(AdjustmentKind.Dropped, missed, null, "Recurring sessions keep their own day — nothing is moved")
             missed.sport == Sport.Strength || missed.intensity == Intensity.Easy ->
                 Adjustment(AdjustmentKind.Dropped, missed, null, "Easy and strength sessions are not made up")
             missed.kind == WorkoutKind.Long -> {
@@ -395,6 +455,9 @@ object Zones {
             WorkoutKind.Tempo -> "Z3–Z4 · HR ${zones[2].low}–${zones[3].high}"
             WorkoutKind.Intervals -> "Z4–Z5 · HR ${zones[3].low}–${zones[4].high}"
             WorkoutKind.Race -> "Z3 · HR ${zones[2].low}–${zones[2].high}"
+            WorkoutKind.ClubEasy -> "Z2 · HR ${zones[1].low}–${zones[1].high}"
+            WorkoutKind.ClubSteady -> "Z3 · HR ${zones[2].low}–${zones[2].high}"
+            WorkoutKind.ClubHard -> "Z3–Z4 · HR ${zones[2].low}–${zones[3].high}"
             WorkoutKind.Strength -> null
         }
     }

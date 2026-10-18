@@ -58,6 +58,37 @@ class Prefs(context: Context) {
     fun setWalkNudge(v: Boolean) = update { putBoolean("walkNudge", v) }
     fun setGlucoseSource(v: String?) = update { putString("glucoseSource", v) }
     fun setClaudeModel(v: String) = update { putString("claudeModel", v.trim()) }
+
+    // Recurring sessions (e.g. a weekly run club) that every plan is built around.
+    private val json = kotlinx.serialization.json.Json { ignoreUnknownKeys = true }
+    private val _recurring = MutableStateFlow(readRecurring())
+    val recurring: StateFlow<List<RecurringSession>> = _recurring.asStateFlow()
+
+    private fun readRecurring(): List<RecurringSession> =
+        sp.getString("recurring", null)?.let { runCatching { json.decodeFromString(kotlinx.serialization.builtins.ListSerializer(RecurringSession.serializer()), it) }.getOrNull() } ?: emptyList()
+
+    fun setRecurring(list: List<RecurringSession>) {
+        sp.edit().putString("recurring", json.encodeToString(kotlinx.serialization.builtins.ListSerializer(RecurringSession.serializer()), list)).apply()
+        _recurring.value = list
+    }
+}
+
+@kotlinx.serialization.Serializable
+data class RecurringSession(
+    val id: Long,
+    val name: String,
+    /** java.time.DayOfWeek value, 1 = Monday. */
+    val day: Int,
+    val sport: String,
+    val distanceMi: Double?,
+    val durationMin: Int,
+    val intensity: String,
+    val keepInTaper: Boolean = true,
+) {
+    fun toFixed() = com.javon.healthdash.calc.FixedSession(
+        java.time.DayOfWeek.of(day), com.javon.healthdash.calc.Sport.valueOf(sport), name, distanceMi, durationMin,
+        com.javon.healthdash.calc.Intensity.valueOf(intensity), keepInTaper,
+    )
 }
 
 /**

@@ -32,7 +32,7 @@ import java.time.ZoneId
 import kotlinx.coroutines.sync.Mutex
 import kotlinx.coroutines.sync.withLock
 
-fun PlannedEntity.toSession() = PlannedSession(LocalDate.ofEpochDay(date), Sport.valueOf(sport), WorkoutKind.valueOf(kind), durationMin, note)
+fun PlannedEntity.toSession() = PlannedSession(LocalDate.ofEpochDay(date), Sport.valueOf(sport), WorkoutKind.valueOf(kind), durationMin, note, name, distanceMi)
 
 fun PlanEntity.inputs() = PlanInputs(
     race = RaceType.valueOf(raceType),
@@ -66,7 +66,7 @@ class TrainingRepository(private val dao: AppDao) {
             ),
         )
         dao.insertPlanned(result.weeks.flatMap { w ->
-            w.sessions.map { s -> PlannedEntity(planId = id, date = s.date.toEpochDay(), sport = s.sport.name, kind = s.kind.name, durationMin = s.durationMin, note = s.note, phase = w.phase.name, week = w.index) }
+            w.sessions.map { s -> PlannedEntity(planId = id, date = s.date.toEpochDay(), sport = s.sport.name, kind = s.kind.name, durationMin = s.durationMin, note = s.note, phase = w.phase.name, week = w.index, name = s.name, distanceMi = s.distanceMi) }
         })
         return result
     }

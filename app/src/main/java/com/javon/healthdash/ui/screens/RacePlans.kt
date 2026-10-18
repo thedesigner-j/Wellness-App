@@ -37,6 +37,7 @@ import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.platform.toClipEntry
 import androidx.compose.ui.text.input.KeyboardType
 import androidx.compose.ui.unit.dp
+import androidx.lifecycle.compose.collectAsStateWithLifecycle
 import com.javon.healthdash.AppContainer
 import com.javon.healthdash.calc.Completion
 import com.javon.healthdash.calc.PlanBuilder
@@ -196,7 +197,9 @@ fun PlanBuilderScreen(container: AppContainer, state: DashboardState, onClose: (
     var error by remember { mutableStateOf<String?>(null) }
 
     val goalMin = if (!timeGoal) null else goal.split(":").let { p -> p.getOrNull(0)?.toIntOrNull()?.let { h -> h * 60 + (p.getOrNull(1)?.toIntOrNull() ?: 0) } }
-    val inputs = PlanInputs(race, raceDate, start, goalMin, weekly.toIntOrNull() ?: 0, days, longDay, strength)
+    val recurring by container.prefs.recurring.collectAsStateWithLifecycle()
+    val fixedDays = recurring.map { DayOfWeek.of(it.day) }.toSet()
+    val inputs = PlanInputs(race, raceDate, start, goalMin, weekly.toIntOrNull() ?: 0, days + fixedDays, longDay, strength, recurring.map { it.toFixed() })
     val back: () -> Unit = { if (step > 1) step-- else onClose() }
 
     if (picking) {
@@ -253,6 +256,11 @@ fun PlanBuilderScreen(container: AppContainer, state: DashboardState, onClose: (
             }
             3 -> {
                 Heading("Volume and availability")
+                if (recurring.isNotEmpty()) AppCard {
+                    Text("Built around", style = Theme.type.labelL, color = Theme.colors.textPrimary)
+                    recurring.sortedBy { it.day }.forEach { r -> Text("${r.name} · ${describe(r)}", style = Theme.type.bodyM, color = Theme.colors.textSecondary) }
+                    Caption("Kept on its day every week and counted in the weekly volume. Edit in Settings › Recurring sessions.")
+                } else Caption("Do a weekly run club or group ride? Add it in Settings › Recurring sessions and plans will build around it.")
                 val rv = recentVolume(state)
                 val fromGarmin = rv.sources.any { it.contains("garmin") }
                 AppCard {
@@ -271,7 +279,7 @@ fun PlanBuilderScreen(container: AppContainer, state: DashboardState, onClose: (
                 }
                 Text("Long workout day", style = Theme.type.labelM, color = Theme.colors.textSecondary)
                 FlowRow(horizontalArrangement = Arrangement.spacedBy(Dimens.spacingSm), verticalArrangement = Arrangement.spacedBy(Dimens.spacingSm)) {
-                    days.sortedBy { it.value }.forEach { d -> FilterChip(dayShortName(d), d == longDay, { longDay = d }) }
+                    (days - fixedDays).sortedBy { it.value }.forEach { d -> FilterChip(dayShortName(d), d == longDay, { longDay = d }) }
                 }
                 Text("Strength days (1–2 recommended)", style = Theme.type.labelM, color = Theme.colors.textSecondary)
                 FlowRow(horizontalArrangement = Arrangement.spacedBy(Dimens.spacingSm), verticalArrangement = Arrangement.spacedBy(Dimens.spacingSm)) {
