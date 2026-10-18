@@ -122,6 +122,8 @@ fun ScreenFrame(
                 .weight(1f)
                 .fillMaxWidth()
                 .then(if (scroll) Modifier.verticalScroll(rememberScrollState()) else Modifier)
+                // With no footer or bottom nav, keep the last item clear of the system navigation bar.
+                .then(if (footer == null && bottomBar == null) Modifier.navigationBarsPadding() else Modifier)
                 .padding(start = Dimens.spacingLg, end = Dimens.spacingLg, top = Dimens.spacingSm, bottom = Dimens.spacing3xl),
             verticalArrangement = Arrangement.spacedBy(Dimens.spacingLg),
             content = content,

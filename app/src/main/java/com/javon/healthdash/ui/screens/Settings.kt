@@ -145,6 +145,13 @@ fun DataSourcesScreen(container: AppContainer, state: DashboardState, onBack: ()
             }
         }
         AppButton("Sync now", onSync, Modifier.fillMaxWidth(), style = ButtonStyle.Secondary, icon = AppIcons.sync)
+        val context = androidx.compose.ui.platform.LocalContext.current
+        AppButton("Open Health Connect data", {
+            // Health Connect's own data browser (shows which apps are writing what).
+            runCatching { context.startActivity(androidx.health.connect.client.HealthConnectClient.getHealthConnectManageDataIntent(context)) }
+                .recoverCatching { context.startActivity(android.content.Intent("android.health.connect.action.HEALTH_HOME_SETTINGS")) }
+        }, Modifier.fillMaxWidth(), style = ButtonStyle.Ghost, icon = AppIcons.heart)
+        Caption("Shows what Garmin, Strava and Samsung Health have written. If a type is empty there, that app isn't sharing it yet.")
     }
 }
 
