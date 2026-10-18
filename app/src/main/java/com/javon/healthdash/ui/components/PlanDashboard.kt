@@ -153,3 +153,56 @@ fun ProgressLine(label: String, value: String, fraction: Double) {
         }
     }
 }
+
+/** Goal likelihood: big %, outlook, projected vs goal, and how the number was built. */
+@Composable
+fun GoalOutlookCard(o: com.javon.healthdash.calc.GoalOutlook, hasGoal: Boolean, sport: com.javon.healthdash.calc.Sport) {
+    val c = Theme.colors
+    fun t(sec: Int) = com.javon.healthdash.calc.PaceMath.fmtTime(sec)
+    AppCard {
+        Row(Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.SpaceBetween, verticalAlignment = Alignment.CenterVertically) {
+            Text(if (hasGoal) "Chance of hitting your goal" else "Projected finish", style = Theme.type.labelL, color = c.textPrimary)
+            Tag("Estimate", TagType.Derived)
+        }
+        if (hasGoal) {
+            Row(verticalAlignment = Alignment.Bottom, horizontalArrangement = Arrangement.spacedBy(Dimens.spacingMd)) {
+                Text("${o.percent}%", style = Theme.type.displayM, color = c.textPrimary)
+                Tag(
+                    o.outlook.label,
+                    when (o.outlook) {
+                        com.javon.healthdash.calc.Outlook.VeryLikely, com.javon.healthdash.calc.Outlook.Likely -> TagType.InRange
+                        com.javon.healthdash.calc.Outlook.TossUp -> TagType.Neutral
+                        com.javon.healthdash.calc.Outlook.Stretch -> TagType.High
+                        com.javon.healthdash.calc.Outlook.Unlikely -> TagType.VeryHigh
+                    },
+                    Modifier.padding(bottom = Dimens.spacingSm),
+                )
+            }
+            MetricTiles(listOf("Projected" to t(o.projectedSec), "Goal" to t(o.goalSec), "Fitness today" to t(o.currentSec)))
+        } else {
+            Text(t(o.projectedSec), style = Theme.type.displayM, color = c.textPrimary)
+            MetricTiles(listOf("Fitness today" to t(o.currentSec), "Expected gain" to "${"%.1f".format(o.gainPct * 100)}%"), columns = 2)
+        }
+        val unit = if (sport == com.javon.healthdash.calc.Sport.Ride) "ride" else "run"
+        Text(
+            buildString {
+                append("Fitness today: ")
+                val parts = mutableListOf<String>()
+                if (o.fromTypicalPace) parts += "your typical run pace (marathon pace ≈ easy pace − 1:15/mi) scaled to race distance = ${t(o.effortSec!!)}"
+                else o.bestEffort?.let { e -> parts += "your fastest recent $unit (${"%.1f".format(e.distanceMi)} mi in ${t(e.durationSec)}) scaled to race distance = ${t(o.effortSec!!)}" }
+                o.vo2Sec?.let { parts += "VO2 max prediction = ${t(it)}" }
+                append(parts.joinToString(", averaged with "))
+                append(". Expected gain by race day ${"%.1f".format(o.gainPct * 100)}% (0.6% per training week left × ${(o.consistency * 100).toInt()}% of recent sessions done).")
+                if (hasGoal) append(" The % allows for normal race-day variation, which is wider the further out the race is.")
+            },
+            style = Theme.type.bodyS, color = c.textSecondary,
+        )
+        if (hasGoal) Caption(
+            when (o.outlook) {
+                com.javon.healthdash.calc.Outlook.VeryLikely, com.javon.healthdash.calc.Outlook.Likely -> "Keep the long runs and quality sessions coming — consistency is what moves this number."
+                com.javon.healthdash.calc.Outlook.TossUp -> "Close call. Hitting every long run and quality session is what tips it."
+                else -> "Your goal is ahead of your current trend. Keep training — or consider adjusting the goal in Race plans."
+            },
+        )
+    }
+}

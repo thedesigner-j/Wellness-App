@@ -41,11 +41,13 @@ import com.javon.healthdash.data.db.PlannedEntity
 import com.javon.healthdash.data.db.WorkoutEntity
 import com.javon.healthdash.data.done
 import com.javon.healthdash.data.label
+import com.javon.healthdash.data.inputs
 import com.javon.healthdash.calc.DoneActivity
 import com.javon.healthdash.calc.Phase
 import com.javon.healthdash.calc.PlanProgress
 import com.javon.healthdash.calc.ProgressSession
 import com.javon.healthdash.ui.components.PlanHeroCard
+import com.javon.healthdash.ui.components.GoalOutlookCard
 import com.javon.healthdash.ui.components.ProgressLine
 import com.javon.healthdash.ui.components.WeekStrip
 import com.javon.healthdash.data.sportOf
@@ -276,6 +278,30 @@ fun TrainingScreen(
         if (progress != null && nextPlan != null) {
             if (LocalDate.ofEpochDay(nextPlan.startDate).isAfter(today)) Notice(NoticeType.Info, "Plan starts ${Fmt.dayShort(LocalDate.ofEpochDay(nextPlan.startDate).atStartOfDay(zone).toInstant().toEpochMilli())}", "Your ${nextPlan.label()} plan hasn't started yet.")
             PlanHeroCard(progress, nextPlan.label(), Fmt.dayShort(LocalDate.ofEpochDay(nextPlan.raceDate).atStartOfDay(zone).toInstant().toEpochMilli())) { onPlans() }
+            val raceType = com.javon.healthdash.calc.RaceType.valueOf(nextPlan.raceType)
+            if (!raceType.relay) {
+                val raceMi = nextPlan.inputs().raceMi
+                val samples = state.workouts.filter { sportOf(it.exerciseType) == progress.sport && (it.distanceM ?: 0.0) > 0 }.map {
+                    com.javon.healthdash.calc.EffortSample(it.distanceM!! / com.javon.healthdash.calc.METERS_PER_MI, ((it.endMs - it.startMs) / 1000).toInt(), ((state.nowMs - it.startMs) / (24 * 3_600_000L)).toInt())
+                }
+                val vo2 = state.vo2.filter { state.nowMs - it.timeMs < 90L * 24 * 3_600_000L }.maxByOrNull { it.timeMs }?.value
+                val sessionsByWeek = data.planned.filter { it.planId == nextPlan.id }.groupBy { it.week }
+                val trainingLeft = sessionsByWeek.count { (w, l) -> w > progress.weekIndex && l.first().phase in setOf("Base", "Build", "Peak") }
+                val outlook = com.javon.healthdash.calc.GoalLikelihood.estimate(
+                    progress.sport, raceMi, (nextPlan.goalMin ?: 0) * 60, samples, vo2,
+                    trainingLeft, progress.totalWeeks - progress.weekIndex - 1, if (progress.due14 == 0) 1.0 else progress.done14.toDouble() / progress.due14,
+                    typicalPaceSec = runFitness(state)?.takeIf { it.runs > 0 }?.easyPaceSec,
+                )
+                if (outlook != null) GoalOutlookCard(outlook, nextPlan.goalMin != null, progress.sport)
+                else AppCard {
+                    Text("Chance of hitting your goal", style = Theme.type.labelL, color = Theme.colors.textPrimary)
+                    Text(
+                        "Needs a ${if (progress.sport == Sport.Ride) "ride" else "run"} of 3+ miles with distance in the last 6 weeks${if (progress.sport == Sport.Run) ", or your VO2 max from the watch" else ""}.",
+                        style = Theme.type.bodyS, color = Theme.colors.textSecondary,
+                    )
+                    if (progress.sport == Sport.Run) AppButton("Add VO2 max", { vo2Open = true }, style = ButtonStyle.Secondary, size = ButtonSize.Small, icon = AppIcons.add)
+                }
+            }
 
             AppCard {
                 Row(Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.SpaceBetween, verticalAlignment = Alignment.CenterVertically) {
