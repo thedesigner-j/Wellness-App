@@ -3,6 +3,15 @@ package com.javon.healthdash.ui.screens
 import androidx.compose.foundation.clickable
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.FlowRow
+import com.javon.healthdash.ui.components.Toggle
+import com.javon.healthdash.calc.PlanResult
+import kotlin.math.roundToInt
+import androidx.compose.ui.unit.dp
+import androidx.compose.ui.draw.clip
+import androidx.compose.foundation.background
+import androidx.compose.foundation.layout.height
+import androidx.compose.foundation.layout.Box
+import androidx.compose.foundation.layout.Column
 import androidx.compose.foundation.layout.Row
 import androidx.compose.foundation.layout.fillMaxWidth
 import androidx.compose.foundation.layout.padding
@@ -232,6 +241,7 @@ fun TrainingScreen(
     onPlans: () -> Unit,
     onWeek: (LocalDate) -> Unit,
     onAdjustments: () -> Unit,
+    onRaceDay: (Long) -> Unit = {},
 ) {
     val zone = ZoneId.systemDefault()
     val data = rememberTrainingData(container)
@@ -240,6 +250,7 @@ fun TrainingScreen(
     var month by remember { mutableStateOf(YearMonth.from(today)) }
     var dayOpen by remember { mutableStateOf<LocalDate?>(null) }
     var vo2Open by remember { mutableStateOf(false) }
+    var travelOpen by remember { mutableStateOf(false) }
     val scope = rememberCoroutineScope()
     val zones = zonesFor(state, zone)
     val done = state.workouts.map { it.done() }
@@ -302,6 +313,16 @@ fun TrainingScreen(
                     )
                     if (progress.sport == Sport.Run) AppButton("Add VO2 max", { vo2Open = true }, style = ButtonStyle.Secondary, size = ButtonSize.Small, icon = AppIcons.add)
                 }
+            }
+
+            // Effort ratings → ease the next week, or suggest a goal check. Not again within 7 days of easing.
+            val rated = data.planned.filter { it.planId == nextPlan.id && it.rpe != null }.map {
+                com.javon.healthdash.calc.RatedSession(LocalDate.ofEpochDay(it.date), WorkoutKind.valueOf(it.kind), it.rpe!!, reviewFor(it, state, zone, zones)?.pace ?: com.javon.healthdash.calc.PaceCheck.NoData)
+            }
+            val recentlyEased = data.adjustments.any { it.kind == "Eased" && state.nowMs - it.timeMs < 7L * 24 * 3_600_000L }
+            com.javon.healthdash.calc.Adaptation.suggest(rated, today)?.takeIf { !recentlyEased || it.kind != com.javon.healthdash.calc.SuggestionKind.Ease }?.let { s ->
+                if (s.kind == com.javon.healthdash.calc.SuggestionKind.Ease) Notice(NoticeType.Gentle, s.title, s.reason, action = "Ease next 7 days", onAction = { scope.launch { container.training.ease(nextPlan.id, today, s.factor, s.reason) } })
+                else Notice(NoticeType.Info, s.title, s.reason, action = "Race plans", onAction = onPlans)
             }
 
             AppCard {
@@ -373,8 +394,13 @@ fun TrainingScreen(
 
         RowGroup {
             ListRow("Race plans", subtitle = if (data.plans.isEmpty()) "Create your first plan" else "${data.plans.size} plan${if (data.plans.size == 1) "" else "s"} in sequence", icon = AppIcons.calendar, onClick = onPlans)
-            ListRow("Plan adjustments", subtitle = "${data.adjustments.size} rule-based changes", icon = AppIcons.sync, onClick = onAdjustments)
+            if (nextPlan != null) {
+                ListRow("Race-day plan", subtitle = "Splits, fueling and carb loading", icon = AppIcons.run, onClick = { onRaceDay(nextPlan.id) })
+                ListRow("Travel or time off", subtitle = "Skip days and rebuild the plan around them", icon = AppIcons.calendar, onClick = { travelOpen = true })
+            }
+            ListRow("Plan adjustments", subtitle = "${data.adjustments.size} changes", icon = AppIcons.sync, onClick = onAdjustments)
         }
+        if (travelOpen && nextPlan != null) TravelSheet(container, state, nextPlan, zone) { travelOpen = false }
 
         val thisWeek = PlanBuilder.monday(today)
         val weeks = (-5..2).map { thisWeek.plusWeeks(it.toLong()) }
@@ -536,14 +562,46 @@ fun Vo2Sheet(onDismiss: () -> Unit, onSave: (Double) -> Unit) {
  * A planned session with "Mark complete" for workouts done without the watch. Shown for today and past days;
  * watch-matched sessions are already done, manual ones can be undone.
  */
+/** Opens the strength workout screen for a planned strength session (provided by navigation). */
+val LocalOpenStrength = androidx.compose.runtime.staticCompositionLocalOf<(Long) -> Unit> { {} }
+
+/** The watch workout that completed a planned session, if any. */
+fun matchedWorkout(e: PlannedEntity, s: DashboardState, zone: ZoneId): WorkoutEntity? =
+    if (e.status == "Done") null else s.workouts.firstOrNull { w -> Completion.matches(e.toSession(), listOf(w.done()), zone) != null }
+
+/** Post-session review from the matched watch workout or the manual log. */
+fun reviewFor(e: PlannedEntity, s: DashboardState, zone: ZoneId, zones: List<HrZone>): com.javon.healthdash.calc.SessionReview? {
+    if (e.sport == Sport.Strength.name) return null
+    val kind = WorkoutKind.valueOf(e.kind)
+    val sport = Sport.valueOf(e.sport)
+    if (e.status == "Done") return com.javon.healthdash.calc.Feedback.review(kind, sport, e.durationMin, e.distanceMi, e.doneMin ?: e.durationMin, e.doneMi ?: e.distanceMi?.takeIf { false }, null, zones)
+    val w = matchedWorkout(e, s, zone) ?: return null
+    val doneSport = sportOf(w.exerciseType)
+    return com.javon.healthdash.calc.Feedback.review(
+        kind, if (doneSport == Sport.Ride && sport == Sport.Run) Sport.Ride else sport, e.durationMin,
+        if (doneSport == Sport.Ride && sport == Sport.Run) null else e.distanceMi,
+        ((w.endMs - w.startMs) / MINUTE_MS).toInt(), w.distanceM?.div(com.javon.healthdash.calc.METERS_PER_MI), w.avgHr, zones,
+    )
+}
+
+/**
+ * A planned session: "Mark complete" for workouts done without the watch, "Move" to another day, and — once
+ * done — a review against the plan and a "How did it feel?" rating that drives plan easing.
+ */
 @Composable
 fun SessionCard(container: AppContainer, state: DashboardState, e: PlannedEntity, zones: List<HrZone>, zone: ZoneId) {
     val scope = rememberCoroutineScope()
+    val openStrength = LocalOpenStrength.current
     var marking by remember { mutableStateOf(false) }
+    var moving by remember { mutableStateOf(false) }
     val today = localDateOf(state.nowMs, zone)
+    val date = LocalDate.ofEpochDay(e.date)
     val status = sessionStatus(e, state, zone)
     val manual = e.status == "Done"
-    val canMark = status != WorkoutCardStatus.Completed && !LocalDate.ofEpochDay(e.date).isAfter(today)
+    val strength = e.sport == Sport.Strength.name
+    val canMark = status != WorkoutCardStatus.Completed && !date.isAfter(today)
+    val canMove = status != WorkoutCardStatus.Completed && e.status != "Dropped" && !date.isBefore(today) && WorkoutKind.valueOf(e.kind).let { it != WorkoutKind.Race && !it.recurring }
+    val review = if (status == WorkoutCardStatus.Completed) reviewFor(e, state, zone, zones) else null
     val detail = when {
         manual -> "Marked done" + (listOfNotNull(e.doneMi?.let { "${Fmt.one(it)} mi" }, e.doneMin?.let { "$it min" }).takeIf { it.isNotEmpty() }?.joinToString(" · ", " · ") ?: " as planned") + " · " + sessionDetail(e, zones)
         doneAsRide(e, state, zone) -> "Done as a ride · " + sessionDetail(e, zones)
@@ -551,11 +609,85 @@ fun SessionCard(container: AppContainer, state: DashboardState, e: PlannedEntity
     }
     WorkoutCard(
         sessionTitle(e), detail, e.note, status, sportIcon(Sport.valueOf(e.sport)),
+        onClick = if (strength) ({ openStrength(e.id) }) else null,
         action = when { manual -> "Undo complete"; canMark -> "Mark complete"; else -> null },
         onAction = { if (manual) scope.launch { container.training.undoDone(e.id, zone) } else marking = true },
+        secondary = when { strength && status != WorkoutCardStatus.Completed -> "Open workout"; canMove -> "Move"; else -> null },
+        onSecondary = { if (strength && status != WorkoutCardStatus.Completed) openStrength(e.id) else moving = true },
+        extra = {
+            if (review != null) SessionReviewBlock(review, Sport.valueOf(e.sport))
+            if (status == WorkoutCardStatus.Completed && !strength) EffortPicker(e.rpe) { r -> scope.launch { container.training.setRpe(e.id, r) } }
+        },
     )
     if (marking) MarkDoneSheet(e, onDismiss = { marking = false }) { min, mi ->
         scope.launch { container.training.markDone(e.id, min, mi); marking = false }
+    }
+    if (moving) MoveSheet(container, state, e, zone, onDismiss = { moving = false })
+}
+
+@Composable
+fun SessionReviewBlock(r: com.javon.healthdash.calc.SessionReview, sport: Sport) {
+    val c = Theme.colors
+    Column(
+        Modifier.fillMaxWidth().clip(com.javon.healthdash.ui.theme.Shapes.md).background(c.bgSurfaceSunken).padding(Dimens.spacingMd),
+        verticalArrangement = Arrangement.spacedBy(Dimens.spacingXs),
+    ) {
+        Row(Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.SpaceBetween, verticalAlignment = Alignment.CenterVertically) {
+            Text(r.headline, style = Theme.type.labelL, color = c.textPrimary)
+            Tag(r.pace.label, when (r.pace) { com.javon.healthdash.calc.PaceCheck.OnTarget -> TagType.InRange; com.javon.healthdash.calc.PaceCheck.NoData -> TagType.Neutral; else -> TagType.High })
+        }
+        val tiles = listOfNotNull(
+            r.completion?.let { "Done" to "${(it * 100).roundToInt()}%" },
+            r.plannedPace?.let { pp -> r.actualPace?.let { ap ->
+                if (sport == Sport.Ride) "Speed" to "${Fmt.one(ap / 10.0)} / ${Fmt.one(pp / 10.0)} mph"
+                else "Pace" to "${com.javon.healthdash.calc.PaceMath.fmt(ap)} / ${com.javon.healthdash.calc.PaceMath.fmt(pp)}"
+            } },
+            r.hrZone?.let { "Avg HR" to "Z$it" },
+        )
+        if (tiles.isNotEmpty()) Text(tiles.joinToString("   ·   ") { "${it.first} ${it.second}" }, style = Theme.type.bodyS, color = c.textSecondary)
+        r.notes.forEach { Text(it, style = Theme.type.bodyS, color = c.textSecondary) }
+    }
+}
+
+/** "How did it feel?" 1–10. */
+@Composable
+fun EffortPicker(rpe: Int?, onPick: (Int?) -> Unit) {
+    val c = Theme.colors
+    Column(verticalArrangement = Arrangement.spacedBy(Dimens.spacingXs)) {
+        Text(rpe?.let { "Felt $it/10 · ${com.javon.healthdash.calc.EffortBand.of(it).label}" } ?: "How did it feel? (1 easy – 10 all out)", style = Theme.type.labelM, color = c.textSecondary)
+        Row(Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.spacedBy(4.dp)) {
+            (1..10).forEach { n ->
+                val on = rpe == n
+                Box(
+                    Modifier.weight(1f).height(32.dp).clip(com.javon.healthdash.ui.theme.Shapes.sm)
+                        .background(if (on) c.bgAccent else c.bgNeutral).clickable { onPick(if (on) null else n) },
+                    contentAlignment = Alignment.Center,
+                ) { Text("$n", style = Theme.type.labelS, color = if (on) c.textOnAccent else c.textPrimary) }
+            }
+        }
+    }
+}
+
+/** Move a session to another day this week (today or later), with rule warnings. */
+@Composable
+fun MoveSheet(container: AppContainer, state: DashboardState, e: PlannedEntity, zone: ZoneId, onDismiss: () -> Unit) {
+    val scope = rememberCoroutineScope()
+    val data = rememberTrainingData(container)
+    val today = localDateOf(state.nowMs, zone)
+    val from = LocalDate.ofEpochDay(e.date)
+    val monday = PlanBuilder.monday(from)
+    val days = (0..13).map { monday.plusDays(it.toLong()) }.filter { !it.isBefore(today) && it != from }
+    var to by remember { mutableStateOf<LocalDate?>(null) }
+    val week = data.planned.filter { it.planId == e.planId && it.status != "Dropped" && LocalDate.ofEpochDay(it.date) in monday.minusDays(1)..monday.plusDays(14) }
+    val warnings = to?.let { t -> com.javon.healthdash.calc.Reschedule.warnings(e.toSession(), t, week.filter { it.id != e.id }.map { it.toSession() }) } ?: emptyList()
+    AppSheet("Move ${sessionTitle(e).substringBefore(" ·")}", onDismiss) {
+        Text("From ${Fmt.dayShort(from.atStartOfDay(zone).toInstant().toEpochMilli())} to:", style = Theme.type.bodyM, color = Theme.colors.textSecondary)
+        FlowRow(horizontalArrangement = Arrangement.spacedBy(Dimens.spacingSm), verticalArrangement = Arrangement.spacedBy(Dimens.spacingSm)) {
+            days.forEach { d -> FilterChip(Fmt.dayShort(d.atStartOfDay(zone).toInstant().toEpochMilli()), d == to, { to = d }) }
+        }
+        warnings.forEach { Notice(NoticeType.Gentle, "Heads up", it) }
+        if (to != null && warnings.isEmpty()) Caption("No conflicts with your other sessions.")
+        AppButton(if (warnings.isEmpty()) "Move" else "Move anyway", { scope.launch { container.training.move(e.id, to!!); onDismiss() } }, Modifier.fillMaxWidth(), enabled = to != null)
     }
 }
 
@@ -577,5 +709,77 @@ fun MarkDoneSheet(e: PlannedEntity, onDismiss: () -> Unit, onSave: (Int?, Double
             onSave(m?.takeIf { it != e.durationMin }, d?.takeIf { e.distanceMi == null || kotlin.math.abs(it - e.distanceMi) > 0.01 })
         }, Modifier.fillMaxWidth(), enabled = m != null && (miles.isBlank() || d != null))
         AppButton("Cancel", onDismiss, Modifier.fillMaxWidth(), style = ButtonStyle.Ghost)
+    }
+}
+
+/**
+ * Travel / time off: drops the sessions in a date range and, optionally, regenerates the rest of the plan from
+ * the day after with current fitness (same race, goal and days).
+ */
+@OptIn(androidx.compose.material3.ExperimentalMaterial3Api::class)
+@Composable
+fun TravelSheet(container: AppContainer, state: DashboardState, plan: PlanEntity, zone: ZoneId, onDismiss: () -> Unit) {
+    val scope = rememberCoroutineScope()
+    val today = localDateOf(state.nowMs, zone)
+    var from by remember { mutableStateOf(today) }
+    var to by remember { mutableStateOf(today.plusDays(6)) }
+    var picking by remember { mutableStateOf<Int?>(null) }
+    var rebuild by remember { mutableStateOf(true) }
+    var error by remember { mutableStateOf<String?>(null) }
+    val recurring by container.prefs.recurring.collectAsStateWithLifecycle()
+    val rules = TargetsRepository.toRules(state.targetValues)
+    val fuel = TargetsRepository.toFuelTable(state.targetValues)
+    val race = LocalDate.ofEpochDay(plan.raceDate)
+    val back = to.plusDays(1)
+
+    picking?.let { which ->
+        val ds = androidx.compose.material3.rememberDatePickerState(initialSelectedDateMillis = (if (which == 0) from else to).atStartOfDay(java.time.ZoneOffset.UTC).toInstant().toEpochMilli())
+        androidx.compose.material3.DatePickerDialog(
+            onDismissRequest = { picking = null },
+            confirmButton = {
+                androidx.compose.material3.TextButton({
+                    ds.selectedDateMillis?.let { ms ->
+                        val d = java.time.Instant.ofEpochMilli(ms).atZone(java.time.ZoneOffset.UTC).toLocalDate()
+                        if (which == 0) { from = d; if (to.isBefore(d)) to = d } else to = if (d.isBefore(from)) from else d
+                    }
+                    picking = null
+                }) { Text("Set") }
+            },
+            dismissButton = { androidx.compose.material3.TextButton({ picking = null }) { Text("Cancel") } },
+        ) { androidx.compose.material3.DatePicker(ds) }
+    }
+
+    fun ms(d: LocalDate) = d.atStartOfDay(zone).toInstant().toEpochMilli()
+    val skipped = rememberTrainingData(container).planned.count { it.planId == plan.id && it.status == "Planned" && LocalDate.ofEpochDay(it.date) in from..to }
+    AppSheet("Travel or time off", onDismiss) {
+        RowGroup {
+            ListRow("First day off", trailing = Fmt.dayShort(ms(from)), icon = AppIcons.calendar, onClick = { picking = 0 })
+            ListRow("Last day off", trailing = Fmt.dayShort(ms(to)), icon = AppIcons.calendar, onClick = { picking = 1 })
+        }
+        Text("$skipped planned ${if (skipped == 1) "session" else "sessions"} will be skipped.", style = Theme.type.bodyM, color = Theme.colors.textSecondary)
+        Row(Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.SpaceBetween, verticalAlignment = Alignment.CenterVertically) {
+            Column(Modifier.weight(1f)) {
+                Text("Rebuild the plan from ${Fmt.dayShort(ms(back))}", style = Theme.type.labelL, color = Theme.colors.textPrimary)
+                Text("Regenerates the remaining weeks from your current fitness, so you don't jump back in at full load.", style = Theme.type.bodyS, color = Theme.colors.textSecondary)
+            }
+            Toggle(rebuild, { rebuild = it })
+        }
+        error?.let { Notice(NoticeType.Info, "Couldn't rebuild", it) }
+        AppButton("Save", {
+            scope.launch {
+                error = null
+                if (rebuild && back.isBefore(race)) {
+                    val inputs = plan.inputs().copy(startDate = back, fixed = recurring.map { it.toFixed() })
+                    val result = if (inputs.race.sport == Sport.Ride) rideFitness(state)?.let { com.javon.healthdash.calc.RidePlanBuilder.generate(inputs, it, rules, fuel).first }
+                    else runFitness(state)?.let { com.javon.healthdash.calc.RunPlanBuilder.generate(inputs, it, rules, com.javon.healthdash.calc.RunRules(), fuel).first }
+                    when (result) {
+                        null -> { error = "Needs recent ${if (inputs.race.sport == Sport.Ride) "rides" else "runs"} from Garmin to size the plan. Days were not skipped."; return@launch }
+                        is PlanResult.Invalid -> { error = result.reason + ". Days were not skipped."; return@launch }
+                        is PlanResult.Ok -> { container.training.skip(plan.id, from, to); container.training.rebuildFrom(plan, back, result) }
+                    }
+                } else container.training.skip(plan.id, from, to)
+                onDismiss()
+            }
+        }, Modifier.fillMaxWidth())
     }
 }

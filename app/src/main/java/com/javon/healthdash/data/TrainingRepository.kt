@@ -101,7 +101,7 @@ class TrainingRepository(private val dao: AppDao) {
     ): Unit = lock.withLock {
         val today = LocalDate.now(zone)
         val all = dao.plannedNow()
-        val handled = dao.adjustmentsNow().map { it.sessionId }.toSet()
+        val handled = dao.adjustmentsNow().filter { it.kind in RULE_KINDS }.map { it.sessionId }.toSet()
         val done = workouts.map { it.done() }
         val now = System.currentTimeMillis()
 
@@ -146,9 +146,57 @@ class TrainingRepository(private val dao: AppDao) {
     /** Undoes a manual completion: back to Missed if the missed rule already handled it, else Planned. */
     suspend fun undoDone(id: Long, zone: ZoneId) {
         val e = dao.plannedNow().firstOrNull { it.id == id && it.status == "Done" } ?: return
-        val handled = dao.adjustmentsNow().any { it.sessionId == id && it.kind != "Swapped" }
+        val handled = dao.adjustmentsNow().any { it.sessionId == id && (it.kind == "Moved" || it.kind == "Dropped") }
         val past = LocalDate.ofEpochDay(e.date).isBefore(LocalDate.now(zone))
         dao.updatePlanned(e.copy(status = if (handled && past) "Missed" else "Planned", doneMin = null, doneMi = null))
+    }
+
+    /** How a completed session felt (RPE 1–10). */
+    suspend fun setRpe(id: Long, rpe: Int?) {
+        val e = dao.plannedNow().firstOrNull { it.id == id } ?: return
+        dao.updatePlanned(e.copy(rpe = rpe))
+    }
+
+    /** Eases the next 7 days of runs/rides (not strength, races or recurring sessions) by [factor]. */
+    suspend fun ease(planId: Long, from: LocalDate, factor: Double, reason: String) {
+        val now = System.currentTimeMillis()
+        val rows = dao.plannedNow().filter {
+            it.planId == planId && it.status == "Planned" && LocalDate.ofEpochDay(it.date) in from..from.plusDays(6) &&
+                it.sport != Sport.Strength.name && WorkoutKind.valueOf(it.kind).let { k -> k != WorkoutKind.Race && !k.recurring }
+        }
+        rows.forEach { e ->
+            dao.updatePlanned(e.copy(distanceMi = e.distanceMi?.let { com.javon.healthdash.calc.Adaptation.ease(it, factor) }, durationMin = (e.durationMin * factor).toInt().coerceAtLeast(10)))
+        }
+        if (rows.isNotEmpty()) dao.insertAdjustment(AdjustmentEntity(sessionId = rows.first().id, timeMs = now, kind = "Eased", summary = "Next 7 days eased by ${((1 - factor) * 100).toInt()}%", reason = reason, originalKind = null, originalDurationMin = null, originalNote = null))
+    }
+
+    /** Moves a session to another day. */
+    suspend fun move(id: Long, to: LocalDate) {
+        val e = dao.plannedNow().firstOrNull { it.id == id } ?: return
+        val from = LocalDate.ofEpochDay(e.date)
+        dao.updatePlanned(e.copy(date = to.toEpochDay()))
+        dao.insertAdjustment(AdjustmentEntity(sessionId = id, timeMs = System.currentTimeMillis(), kind = "Rescheduled", summary = "${WorkoutKind.valueOf(e.kind).label} moved ${dayName(from)} → ${dayName(to)}", reason = "Moved by you", originalKind = null, originalDurationMin = null, originalNote = null))
+    }
+
+    /** Travel / time off: drops planned sessions in [from]..[to]. Returns how many. */
+    suspend fun skip(planId: Long, from: LocalDate, to: LocalDate): Int {
+        val rows = dao.plannedNow().filter { it.planId == planId && it.status == "Planned" && LocalDate.ofEpochDay(it.date) in from..to }
+        rows.forEach { dao.updatePlanned(it.copy(status = "Dropped")) }
+        if (rows.isNotEmpty()) dao.insertAdjustment(AdjustmentEntity(sessionId = rows.first().id, timeMs = System.currentTimeMillis(), kind = "Travel", summary = "Time off ${dayName(from)} – ${dayName(to)}", reason = "${rows.size} sessions skipped", originalKind = null, originalDurationMin = null, originalNote = null))
+        return rows.size
+    }
+
+    /**
+     * Rebuilds the rest of a plan from [from] (e.g. after travel) with a freshly generated [result] that starts there.
+     * Keeps everything before [from]; week numbers continue from the original start.
+     */
+    suspend fun rebuildFrom(plan: PlanEntity, from: LocalDate, result: PlanResult.Ok) {
+        val offset = java.time.temporal.ChronoUnit.WEEKS.between(PlanBuilder.monday(LocalDate.ofEpochDay(plan.startDate)), PlanBuilder.monday(from)).toInt()
+        dao.deletePlannedFrom(plan.id, from.toEpochDay())
+        dao.insertPlanned(result.weeks.flatMap { w ->
+            w.sessions.filter { !it.date.isBefore(from) }.map { s -> PlannedEntity(planId = plan.id, date = s.date.toEpochDay(), sport = s.sport.name, kind = s.kind.name, durationMin = s.durationMin, note = s.note, phase = w.phase.name, week = w.index + offset, name = s.name, distanceMi = s.distanceMi, detail = s.detail) }
+        })
+        dao.insertAdjustment(AdjustmentEntity(sessionId = 0, timeMs = System.currentTimeMillis(), kind = "Rebuilt", summary = "Plan rebuilt from ${dayName(from)}", reason = "Regenerated from your current fitness", originalKind = null, originalDurationMin = null, originalNote = null))
     }
 
     /** "Keep original plan": restores a swapped session. */
@@ -160,6 +208,8 @@ class TrainingRepository(private val dao: AppDao) {
     }
 
     companion object {
+        /** Adjustments made by the missed-session and readiness rules (others — eased, moved by you, travel — don't block them). */
+        val RULE_KINDS = setOf("Moved", "Dropped", "Swapped")
         fun dayName(d: LocalDate) = d.dayOfWeek.name.lowercase().replaceFirstChar(Char::uppercase).take(3) + " " + d.monthValue + "/" + d.dayOfMonth
     }
 }

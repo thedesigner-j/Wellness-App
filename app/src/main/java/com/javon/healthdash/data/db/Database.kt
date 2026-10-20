@@ -80,6 +80,8 @@ data class PlannedEntity(
     /** Marked complete by hand: actual minutes and miles (null = as planned). */
     val doneMin: Int? = null,
     val doneMi: Double? = null,
+    /** How the session felt, 1–10 (RPE), entered after the workout. */
+    val rpe: Int? = null,
 )
 
 /** Log of rule-based plan changes, with what is needed to undo a swap. */
@@ -295,6 +297,7 @@ interface AppDao {
     @Query("SELECT * FROM plans ORDER BY raceDate") fun plans(): Flow<List<PlanEntity>>
     @Query("SELECT * FROM planned ORDER BY date, id") fun planned(): Flow<List<PlannedEntity>>
     @Query("SELECT * FROM planned ORDER BY date, id") suspend fun plannedNow(): List<PlannedEntity>
+    @Query("DELETE FROM planned WHERE planId = :planId AND date >= :fromEpochDay AND status != 'Done'") suspend fun deletePlannedFrom(planId: Long, fromEpochDay: Long)
     @Query("SELECT * FROM adjustments ORDER BY timeMs DESC") fun adjustments(): Flow<List<AdjustmentEntity>>
     @Query("SELECT * FROM adjustments") suspend fun adjustmentsNow(): List<AdjustmentEntity>
     @Query("SELECT * FROM fuel ORDER BY timeMs") fun fuel(): Flow<List<FuelEntity>>
@@ -308,10 +311,10 @@ interface AppDao {
         SleepEntity::class, ReadingEntity::class, LabEntity::class,
         PlanEntity::class, PlannedEntity::class, AdjustmentEntity::class, FuelEntity::class,
     ],
-    version = 7,
+    version = 8,
     exportSchema = true,
     // Each version only adds tables or nullable columns, so Room migrates automatically and keeps data.
-    autoMigrations = [androidx.room.AutoMigration(from = 1, to = 2), androidx.room.AutoMigration(from = 2, to = 3), androidx.room.AutoMigration(from = 3, to = 4), androidx.room.AutoMigration(from = 4, to = 5), androidx.room.AutoMigration(from = 5, to = 6), androidx.room.AutoMigration(from = 6, to = 7)],
+    autoMigrations = [androidx.room.AutoMigration(from = 1, to = 2), androidx.room.AutoMigration(from = 2, to = 3), androidx.room.AutoMigration(from = 3, to = 4), androidx.room.AutoMigration(from = 4, to = 5), androidx.room.AutoMigration(from = 5, to = 6), androidx.room.AutoMigration(from = 6, to = 7), androidx.room.AutoMigration(from = 7, to = 8)],
 )
 abstract class AppDatabase : RoomDatabase() {
     abstract fun dao(): AppDao

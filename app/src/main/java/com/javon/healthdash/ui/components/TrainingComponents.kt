@@ -149,6 +149,11 @@ fun WorkoutCard(
     onClick: (() -> Unit)? = null,
     action: String? = null,
     onAction: () -> Unit = {},
+    /** Optional second button (e.g. "Move"). */
+    secondary: String? = null,
+    onSecondary: () -> Unit = {},
+    /** Extra content under the header (post-run review, effort rating). */
+    extra: @Composable androidx.compose.foundation.layout.ColumnScope.() -> Unit = {},
 ) {
     val c = Theme.colors
     androidx.compose.foundation.layout.Column(
@@ -182,9 +187,14 @@ fun WorkoutCard(
                 Text(fueling, style = Theme.type.bodyS, color = c.textPrimary)
             }
         }
-        if (action != null) {
-            Row(
-                Modifier.fillMaxWidth().clip(Shapes.md).border(1.dp, c.borderSubtle, Shapes.md).clickable(onClick = onAction).padding(vertical = Dimens.spacingSm),
+        extra()
+        if (action != null || secondary != null) Row(Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.spacedBy(Dimens.spacingSm)) {
+            if (secondary != null) Row(
+                Modifier.weight(1f).clip(Shapes.md).border(1.dp, c.borderSubtle, Shapes.md).clickable(onClick = onSecondary).padding(vertical = Dimens.spacingSm),
+                horizontalArrangement = Arrangement.Center, verticalAlignment = Alignment.CenterVertically,
+            ) { Text(secondary, style = Theme.type.labelM, color = c.textSecondary) }
+            if (action != null) Row(
+                Modifier.weight(1f).clip(Shapes.md).border(1.dp, c.borderSubtle, Shapes.md).clickable(onClick = onAction).padding(vertical = Dimens.spacingSm),
                 horizontalArrangement = Arrangement.Center, verticalAlignment = Alignment.CenterVertically,
             ) {
                 if (status != WorkoutCardStatus.Completed) Icon(AppIcons.check, null, tint = c.textAccent, modifier = Modifier.size(16.dp).padding(end = 2.dp))

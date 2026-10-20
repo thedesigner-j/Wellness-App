@@ -81,9 +81,13 @@ object Routes {
     const val WEEK = "week/{epochDay}"
     const val ADJUSTMENTS = "adjustments"
     const val EXPORT = "export"
+    const val STRENGTH = "strength/{id}"
+    const val RACE_DAY = "raceday/{planId}"
 
     fun workout(id: String) = "workout/${android.net.Uri.encode(id)}"
     fun week(monday: java.time.LocalDate) = "week/${monday.toEpochDay()}"
+    fun strength(id: Long) = "strength/$id"
+    fun raceDay(planId: Long) = "raceday/$planId"
     fun metric(m: TrendMetric, days: Int) = "trends/${m.name}/$days"
     fun day(d: java.time.LocalDate) = "day/${d.toEpochDay()}"
 
@@ -119,6 +123,7 @@ fun AppNav(container: AppContainer) {
     val back: () -> Unit = { nav.popBackStack() }
     val startLog: () -> Unit = { log.start(); nav.navigate(LogStep.Capture.route) }
 
+    androidx.compose.runtime.CompositionLocalProvider(com.javon.healthdash.ui.screens.LocalOpenStrength provides { id: Long -> nav.navigate(Routes.strength(id)) }) {
     NavHost(nav, startDestination = if (prefs.onboardingDone) Routes.TODAY else Routes.ONBOARDING) {
         composable(Routes.ONBOARDING) {
             OnboardingScreen(container, state) {
@@ -143,6 +148,7 @@ fun AppNav(container: AppContainer) {
                 container, state, onTab,
                 onWorkout = { nav.navigate(Routes.workout(it)) }, onPlans = { nav.navigate(Routes.PLANS) },
                 onWeek = { nav.navigate(Routes.week(it)) }, onAdjustments = { nav.navigate(Routes.ADJUSTMENTS) },
+                onRaceDay = { nav.navigate(Routes.raceDay(it)) },
             )
         }
         composable(Routes.WORKOUT, arguments = listOf(navArgument("id") { type = NavType.StringType })) { e ->
@@ -160,6 +166,12 @@ fun AppNav(container: AppContainer) {
         }
         composable(Routes.ADJUSTMENTS) { AdjustmentsScreen(container, state, onBack = back) }
         composable(Routes.EXPORT) { ExportScreen(container, state, onBack = back) }
+        composable(Routes.STRENGTH, arguments = listOf(navArgument("id") { type = NavType.LongType })) { e ->
+            com.javon.healthdash.ui.screens.StrengthScreen(container, state, e.arguments!!.getLong("id"), onBack = back)
+        }
+        composable(Routes.RACE_DAY, arguments = listOf(navArgument("planId") { type = NavType.LongType })) { e ->
+            com.javon.healthdash.ui.screens.RaceDayScreen(container, state, e.arguments!!.getLong("planId"), onBack = back)
+        }
         composable(Routes.MORE) { MoreScreen(onTab, onSettings = { nav.navigate(Routes.SETTINGS) }, onSources = { nav.navigate(Routes.SOURCES) }, onTrends = { nav.navigate(Routes.TRENDS) }) }
         composable(Routes.MEALS, arguments = listOf(navArgument("tab") { type = NavType.IntType; defaultValue = 0 })) { entry ->
             MealsScreen(
@@ -187,5 +199,6 @@ fun AppNav(container: AppContainer) {
             onDone = { nav.navigate(Routes.meals()) { popUpTo(Routes.TODAY) } },
             onViewMeal = { id -> nav.navigate(Routes.meal(id)) { popUpTo(Routes.TODAY) } },
         )
+    }
     }
 }
