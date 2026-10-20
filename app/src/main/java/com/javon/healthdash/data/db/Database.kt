@@ -70,13 +70,16 @@ data class PlannedEntity(
     val note: String,
     val phase: String,
     val week: Int,
-    /** Planned, Dropped, Moved, Swapped, Missed. */
+    /** Planned, Dropped, Moved, Swapped, Missed, or Done (marked complete by hand, no watch data). */
     val status: String = "Planned",
     /** Recurring sessions only: their name ("Run club") and set distance. */
     val name: String? = null,
     val distanceMi: Double? = null,
     /** Workout structure and target paces. */
     val detail: String? = null,
+    /** Marked complete by hand: actual minutes and miles (null = as planned). */
+    val doneMin: Int? = null,
+    val doneMi: Double? = null,
 )
 
 /** Log of rule-based plan changes, with what is needed to undo a swap. */
@@ -305,10 +308,10 @@ interface AppDao {
         SleepEntity::class, ReadingEntity::class, LabEntity::class,
         PlanEntity::class, PlannedEntity::class, AdjustmentEntity::class, FuelEntity::class,
     ],
-    version = 6,
+    version = 7,
     exportSchema = true,
     // Each version only adds tables or nullable columns, so Room migrates automatically and keeps data.
-    autoMigrations = [androidx.room.AutoMigration(from = 1, to = 2), androidx.room.AutoMigration(from = 2, to = 3), androidx.room.AutoMigration(from = 3, to = 4), androidx.room.AutoMigration(from = 4, to = 5), androidx.room.AutoMigration(from = 5, to = 6)],
+    autoMigrations = [androidx.room.AutoMigration(from = 1, to = 2), androidx.room.AutoMigration(from = 2, to = 3), androidx.room.AutoMigration(from = 3, to = 4), androidx.room.AutoMigration(from = 4, to = 5), androidx.room.AutoMigration(from = 5, to = 6), androidx.room.AutoMigration(from = 6, to = 7)],
 )
 abstract class AppDatabase : RoomDatabase() {
     abstract fun dao(): AppDao

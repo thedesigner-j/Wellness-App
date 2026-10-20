@@ -100,6 +100,24 @@ class ProgressTest {
         assertThat(p.lastLong).isNull()
     }
 
+    @Test fun sessionsMarkedDoneByHandCount() {
+        // No watch data at all; every past session marked complete by hand, the long runs with actual miles.
+        val marked = sessions.map { s ->
+            if (!s.date.isBefore(today)) s
+            else if (s.kind == WorkoutKind.Long) s.copy(status = "Done", doneMi = s.distanceMi!! - 1, doneMin = 60)
+            else s.copy(status = "Done")
+        }
+        val p = PlanProgress.compute(marked, emptyList(), today, start, race)
+        assertThat(p.verdict).isEqualTo(Verdict.OnTrack)
+        assertThat(p.doneSoFar).isEqualTo(p.dueSoFar)
+        assertThat(p.thisWeek[1].mark).isEqualTo(DayMark.Done)
+        val (long, act) = p.lastLong!!
+        assertThat(act.distanceMi).isEqualTo(long.distanceMi!! - 1)
+        // Week miles: planned miles, minus 1 for the long run logged short.
+        val w0 = p.weeks.first()
+        assertThat(w0.doneMi).isWithin(1e-6).of(w0.plannedMi - 1)
+    }
+
     @Test fun runsBeforeThePlanStartDontCount() {
         // Plan created on a Sunday: Mon–Sat runs that week happened before the plan.
         val sunday = LocalDate.of(2026, 10, 18)

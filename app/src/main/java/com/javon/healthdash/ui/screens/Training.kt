@@ -137,6 +137,7 @@ fun zonesFor(s: DashboardState, zone: ZoneId): List<HrZone> {
 }
 
 fun sessionStatus(e: PlannedEntity, s: DashboardState, zone: ZoneId): WorkoutCardStatus = when {
+    e.status == "Done" -> WorkoutCardStatus.Completed
     Completion.matches(e.toSession(), s.workouts.map { it.done() }, zone) != null -> WorkoutCardStatus.Completed
     e.status == "Missed" -> WorkoutCardStatus.Missed
     e.status == "Swapped" -> WorkoutCardStatus.Swapped
@@ -254,7 +255,7 @@ fun TrainingScreen(
             val sessions = data.planned.filter { it.date == d.toEpochDay() }
             val ws = state.workouts.filter { localDateOf(it.startMs, zone) == d }
             if (sessions.isEmpty() && ws.isEmpty()) Text("Rest day.", style = Theme.type.bodyM, color = Theme.colors.textSecondary)
-            sessions.forEach { e -> WorkoutCard(sessionTitle(e), sessionDetail(e, zones), e.note, sessionStatus(e, state, zone), sportIcon(Sport.valueOf(e.sport))) }
+            sessions.forEach { e -> SessionCard(container, state, e, zones, zone) }
             if (ws.isNotEmpty()) RowGroup { ws.forEach { w -> WorkoutRow(w, zone) { dayOpen = null; onWorkout(w.id) } } }
             AppButton("Open week", { dayOpen = null; onWeek(PlanBuilder.monday(d)) }, Modifier.fillMaxWidth(), style = ButtonStyle.Ghost)
         }
@@ -262,7 +263,7 @@ fun TrainingScreen(
 
     val progress = nextPlan?.let { plan ->
         val sessions = data.planned.filter { it.planId == plan.id }.map {
-            ProgressSession(it.id, LocalDate.ofEpochDay(it.date), Sport.valueOf(it.sport), WorkoutKind.valueOf(it.kind), it.durationMin, it.distanceMi, it.week, Phase.valueOf(it.phase), it.status)
+            ProgressSession(it.id, LocalDate.ofEpochDay(it.date), Sport.valueOf(it.sport), WorkoutKind.valueOf(it.kind), it.durationMin, it.distanceMi, it.week, Phase.valueOf(it.phase), it.status, it.doneMin, it.doneMi)
         }
         if (sessions.isEmpty()) null else PlanProgress.compute(
             sessions,
@@ -327,14 +328,14 @@ fun TrainingScreen(
         when {
             data.plans.isEmpty() -> EmptyState("No race plan yet", "Create a plan for any run or ride distance. It's built by fixed rules from your recent training.")
             todaySessions.isEmpty() -> AppCard { Text("Rest day — nothing planned today.", style = Theme.type.bodyM, color = Theme.colors.textSecondary) }
-            else -> todaySessions.forEach { e -> WorkoutCard(sessionTitle(e), (if (doneAsRide(e, state, zone)) "Done as a ride · " else "") + sessionDetail(e, zones), e.note, sessionStatus(e, state, zone), sportIcon(Sport.valueOf(e.sport))) }
+            else -> todaySessions.forEach { e -> SessionCard(container, state, e, zones, zone) }
         }
 
         if (progress != null) {
             progress.nextKey?.takeIf { it.date.isAfter(today) }?.let { k ->
                 data.planned.firstOrNull { it.id == k.id }?.let { e ->
                     SectionHeader("Next key workout · ${Fmt.dayShort(k.date.atStartOfDay(zone).toInstant().toEpochMilli())}")
-                    WorkoutCard(sessionTitle(e), sessionDetail(e, zones), e.note, sessionStatus(e, state, zone), sportIcon(Sport.valueOf(e.sport)))
+                    SessionCard(container, state, e, zones, zone)
                 }
             }
             SectionHeader("Progress")
@@ -361,7 +362,7 @@ fun TrainingScreen(
             stateOf = { d ->
                 val sessions = data.planned.filter { it.date == d.toEpochDay() }
                 when {
-                    done.any { localDateOf(it.window.startMs, zone) == d } -> DayState.Completed
+                    done.any { localDateOf(it.window.startMs, zone) == d } || sessions.any { it.status == "Done" } -> DayState.Completed
                     sessions.any { it.status == "Missed" } -> DayState.Missed
                     sessions.isNotEmpty() && !d.isBefore(today) -> DayState.Planned
                     else -> DayState.Rest
@@ -528,5 +529,53 @@ fun Vo2Sheet(onDismiss: () -> Unit, onSave: (Double) -> Unit) {
         AppTextField("VO2 max", v, { v = it }, suffix = "ml/kg/min", keyboardType = KeyboardType.Decimal,
             error = if (parsed != null && parsed !in 20.0..90.0) "Enter a value between 20 and 90" else null)
         AppButton("Save", { onSave(parsed!!) }, Modifier.fillMaxWidth(), enabled = parsed != null && parsed in 20.0..90.0)
+    }
+}
+
+/**
+ * A planned session with "Mark complete" for workouts done without the watch. Shown for today and past days;
+ * watch-matched sessions are already done, manual ones can be undone.
+ */
+@Composable
+fun SessionCard(container: AppContainer, state: DashboardState, e: PlannedEntity, zones: List<HrZone>, zone: ZoneId) {
+    val scope = rememberCoroutineScope()
+    var marking by remember { mutableStateOf(false) }
+    val today = localDateOf(state.nowMs, zone)
+    val status = sessionStatus(e, state, zone)
+    val manual = e.status == "Done"
+    val canMark = status != WorkoutCardStatus.Completed && !LocalDate.ofEpochDay(e.date).isAfter(today)
+    val detail = when {
+        manual -> "Marked done" + (listOfNotNull(e.doneMi?.let { "${Fmt.one(it)} mi" }, e.doneMin?.let { "$it min" }).takeIf { it.isNotEmpty() }?.joinToString(" · ", " · ") ?: " as planned") + " · " + sessionDetail(e, zones)
+        doneAsRide(e, state, zone) -> "Done as a ride · " + sessionDetail(e, zones)
+        else -> sessionDetail(e, zones)
+    }
+    WorkoutCard(
+        sessionTitle(e), detail, e.note, status, sportIcon(Sport.valueOf(e.sport)),
+        action = when { manual -> "Undo complete"; canMark -> "Mark complete"; else -> null },
+        onAction = { if (manual) scope.launch { container.training.undoDone(e.id, zone) } else marking = true },
+    )
+    if (marking) MarkDoneSheet(e, onDismiss = { marking = false }) { min, mi ->
+        scope.launch { container.training.markDone(e.id, min, mi); marking = false }
+    }
+}
+
+@Composable
+fun MarkDoneSheet(e: PlannedEntity, onDismiss: () -> Unit, onSave: (Int?, Double?) -> Unit) {
+    val endurance = e.sport != Sport.Strength.name
+    var minutes by remember { mutableStateOf(e.durationMin.toString()) }
+    var miles by remember { mutableStateOf(e.distanceMi?.let { Fmt.one(it) } ?: "") }
+    AppSheet("Mark complete", onDismiss) {
+        Text(sessionTitle(e), style = Theme.type.labelL, color = Theme.colors.textPrimary)
+        Text("Worked out without the watch? Log what you did — it counts toward your plan, miles and goal outlook.", style = Theme.type.bodyS, color = Theme.colors.textSecondary)
+        AppTextField("Time", minutes, { minutes = it.filter(Char::isDigit).take(3) }, suffix = "min", keyboardType = KeyboardType.Number)
+        if (endurance) AppTextField("Distance", miles, { miles = it }, suffix = "mi", keyboardType = KeyboardType.Decimal,
+            error = if (miles.isNotBlank() && miles.toDoubleOrNull() == null) "Enter miles, e.g. 4.5" else null)
+        val m = minutes.toIntOrNull()?.takeIf { it > 0 }
+        val d = if (endurance) miles.toDoubleOrNull()?.takeIf { it > 0 } else null
+        AppButton("Save", {
+            // Store only what differs from the plan; null = as planned.
+            onSave(m?.takeIf { it != e.durationMin }, d?.takeIf { e.distanceMi == null || kotlin.math.abs(it - e.distanceMi) > 0.01 })
+        }, Modifier.fillMaxWidth(), enabled = m != null && (miles.isBlank() || d != null))
+        AppButton("Cancel", onDismiss, Modifier.fillMaxWidth(), style = ButtonStyle.Ghost)
     }
 }

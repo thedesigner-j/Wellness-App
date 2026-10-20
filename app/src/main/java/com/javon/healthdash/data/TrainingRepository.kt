@@ -137,6 +137,20 @@ class TrainingRepository(private val dao: AppDao) {
         }
     }
 
+    /** Marks a session complete by hand (worked out without the watch). Null minutes/miles = as planned. */
+    suspend fun markDone(id: Long, minutes: Int?, miles: Double?) {
+        val e = dao.plannedNow().firstOrNull { it.id == id } ?: return
+        dao.updatePlanned(e.copy(status = "Done", doneMin = minutes, doneMi = miles))
+    }
+
+    /** Undoes a manual completion: back to Missed if the missed rule already handled it, else Planned. */
+    suspend fun undoDone(id: Long, zone: ZoneId) {
+        val e = dao.plannedNow().firstOrNull { it.id == id && it.status == "Done" } ?: return
+        val handled = dao.adjustmentsNow().any { it.sessionId == id && it.kind != "Swapped" }
+        val past = LocalDate.ofEpochDay(e.date).isBefore(LocalDate.now(zone))
+        dao.updatePlanned(e.copy(status = if (handled && past) "Missed" else "Planned", doneMin = null, doneMi = null))
+    }
+
     /** "Keep original plan": restores a swapped session. */
     suspend fun undoSwap(adj: AdjustmentEntity) {
         if (adj.kind != "Swapped" || adj.reverted) return

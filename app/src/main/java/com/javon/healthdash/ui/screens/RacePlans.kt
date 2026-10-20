@@ -62,6 +62,7 @@ import com.javon.healthdash.data.label
 import com.javon.healthdash.domain.DashboardState
 import com.javon.healthdash.ui.Fmt
 import com.javon.healthdash.ui.components.AppButton
+import com.javon.healthdash.ui.components.AppSheet
 import com.javon.healthdash.ui.components.AppCard
 import com.javon.healthdash.ui.components.AppIconButton
 import com.javon.healthdash.ui.components.AppTextField
@@ -534,9 +535,19 @@ fun WeekViewScreen(container: AppContainer, state: DashboardState, weekStart: Lo
     val sessions = data.planned.filter { LocalDate.ofEpochDay(it.date) in weekStart..weekStart.plusDays(6) }
     val phase = sessions.firstOrNull()?.let { "Week ${it.week + 1} · ${it.phase}" } ?: "No plan this week"
     val done = Completion.weeklyMinutes(state.workouts.map { it.done() }, zone)
+    // Sessions marked complete by hand add their minutes.
+    fun manualMin(monday: LocalDate) = data.planned.filter { it.status == "Done" && it.sport != Sport.Strength.name && PlanBuilder.monday(LocalDate.ofEpochDay(it.date)) == monday }.sumOf { it.doneMin ?: it.durationMin }
     val plannedMin = sessions.filter { it.sport != Sport.Strength.name }.sumOf { it.durationMin }
-    val doneMin = done[weekStart] ?: 0
-    val last = done[weekStart.minusWeeks(1)]
+    val doneMin = (done[weekStart] ?: 0) + manualMin(weekStart)
+    val last = ((done[weekStart.minusWeeks(1)] ?: 0) + manualMin(weekStart.minusWeeks(1))).takeIf { it > 0 }
+    var dayOpen by remember { mutableStateOf<LocalDate?>(null) }
+    dayOpen?.let { d ->
+        AppSheet(Fmt.dayLong(d.ms(zone)), onDismiss = { dayOpen = null }) {
+            val list = sessions.filter { it.date == d.toEpochDay() }
+            if (list.isEmpty()) Text("Rest day.", style = Theme.type.bodyM, color = Theme.colors.textSecondary)
+            list.forEach { e -> SessionCard(container, state, e, zones, zone) }
+        }
+    }
     ScreenFrame(topBar = { SmallTopBar(phase, onBack) }) {
         Row(Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.SpaceBetween, verticalAlignment = Alignment.CenterVertically) {
             AppIconButton(AppIcons.arrowBack, "Previous week", { onWeek(weekStart.minusWeeks(1)) }, size = 36.dp, iconSize = 20.dp)
@@ -554,7 +565,7 @@ fun WeekViewScreen(container: AppContainer, state: DashboardState, weekStart: Lo
             (0..6).map { weekStart.plusDays(it.toLong()) }.forEach { d ->
                 val day = sessions.filter { it.date == d.toEpochDay() }
                 Row(
-                    Modifier.fillMaxWidth().background(if (d == today) Theme.colors.bgAccentSubtle else Theme.colors.bgSurface).padding(horizontal = Dimens.spacingLg, vertical = Dimens.spacingMd),
+                    Modifier.fillMaxWidth().background(if (d == today) Theme.colors.bgAccentSubtle else Theme.colors.bgSurface).clickable { dayOpen = d }.padding(horizontal = Dimens.spacingLg, vertical = Dimens.spacingMd),
                     horizontalArrangement = Arrangement.spacedBy(Dimens.spacingMd), verticalAlignment = Alignment.CenterVertically,
                 ) {
                     Column(Modifier.width(56.dp)) {

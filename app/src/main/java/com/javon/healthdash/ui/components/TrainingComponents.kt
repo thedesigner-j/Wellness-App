@@ -147,6 +147,8 @@ fun WorkoutCard(
     icon: ImageVector,
     modifier: Modifier = Modifier,
     onClick: (() -> Unit)? = null,
+    action: String? = null,
+    onAction: () -> Unit = {},
 ) {
     val c = Theme.colors
     androidx.compose.foundation.layout.Column(
@@ -178,6 +180,15 @@ fun WorkoutCard(
             ) {
                 Icon(AppIcons.bolt, null, tint = c.chartFuelMark, modifier = Modifier.size(16.dp))
                 Text(fueling, style = Theme.type.bodyS, color = c.textPrimary)
+            }
+        }
+        if (action != null) {
+            Row(
+                Modifier.fillMaxWidth().clip(Shapes.md).border(1.dp, c.borderSubtle, Shapes.md).clickable(onClick = onAction).padding(vertical = Dimens.spacingSm),
+                horizontalArrangement = Arrangement.Center, verticalAlignment = Alignment.CenterVertically,
+            ) {
+                if (status != WorkoutCardStatus.Completed) Icon(AppIcons.check, null, tint = c.textAccent, modifier = Modifier.size(16.dp).padding(end = 2.dp))
+                Text(action, style = Theme.type.labelM, color = if (status == WorkoutCardStatus.Completed) c.textSecondary else c.textAccent, modifier = Modifier.padding(start = Dimens.spacingXs))
             }
         }
     }

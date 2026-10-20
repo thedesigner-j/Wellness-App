@@ -18,9 +18,17 @@ data class ProgressSession(
     val distanceMi: Double?,
     val week: Int,
     val phase: Phase,
-    /** Planned, Dropped, Moved, Swapped, Missed. */
+    /** Planned, Dropped, Moved, Swapped, Missed, or Done (marked complete by hand). */
     val status: String = "Planned",
-)
+    /** Manual completion: actual minutes / miles (null = as planned). */
+    val doneMin: Int? = null,
+    val doneMi: Double? = null,
+) {
+    val manual get() = status == "Done"
+
+    /** The workout a manual completion stands for. */
+    fun manualActivity() = DoneActivity(date, sport, doneMin ?: durationMin, doneMi ?: distanceMi)
+}
 
 /** A finished workout from Garmin / Health Connect. */
 data class DoneActivity(val date: LocalDate, val sport: Sport?, val durationMin: Int, val distanceMi: Double?)
@@ -69,16 +77,18 @@ object PlanProgress {
 
     /** A workout that day that completes the session per [CrossTraining.counts] (rides can stand in for easy runs). */
     fun match(s: ProgressSession, done: List<DoneActivity>): DoneActivity? =
-        done.firstOrNull { d -> d.date == s.date && CrossTraining.counts(s.sport, s.kind, s.durationMin, d.sport, d.durationMin) }
+        if (s.manual) s.manualActivity() else done.firstOrNull { d -> d.date == s.date && CrossTraining.counts(s.sport, s.kind, s.durationMin, d.sport, d.durationMin) }
 
     /** Run-equivalent miles from rides: ride minutes × 0.4 ÷ easy pace, capped at max(run miles, 10) — as [Fitness.fromActivities]. */
     fun rideCredit(rideMin: Int, runMi: Double, easyPaceSec: Int): Double =
         min(rideMin * Fitness.RIDE_TO_RUN_TIME * 60 / easyPaceSec, max(runMi, 10.0))
 
     fun compute(
-        sessions: List<ProgressSession>, done: List<DoneActivity>, today: LocalDate, startDate: LocalDate, raceDate: LocalDate,
+        sessions: List<ProgressSession>, watch: List<DoneActivity>, today: LocalDate, startDate: LocalDate, raceDate: LocalDate,
         easyPaceSec: Int = Fitness.DEFAULT_EASY_PACE_SEC,
     ): PlanStatus {
+        // Watch workouts plus sessions marked complete by hand.
+        val done = watch + sessions.filter { it.manual }.map { it.manualActivity() }
         val sport = sessions.filter { it.sport != Sport.Strength }.groupingBy { it.sport }.eachCount().maxByOrNull { it.value }?.key ?: Sport.Run
         val firstMonday = PlanBuilder.monday(startDate)
         val totalWeeks = (sessions.maxOfOrNull { it.week } ?: 0) + 1
