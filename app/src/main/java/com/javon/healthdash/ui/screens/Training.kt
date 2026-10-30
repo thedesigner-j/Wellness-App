@@ -433,7 +433,7 @@ fun TrainingScreen(
             if (nextPlan != null) {
                 ListRow("Race-day plan", subtitle = "Splits, fueling and carb loading", icon = AppIcons.run, onClick = { onRaceDay(nextPlan.id) })
                 ListRow("Travel or time off", subtitle = "Skip days and rebuild the plan around them", icon = AppIcons.calendar, onClick = { travelOpen = true })
-                ListRow("Rebuild plan from today", subtitle = "Apply the latest rules and your current fitness", icon = AppIcons.sync, onClick = { rebuildOpen = true })
+                ListRow("Rebuild plan", subtitle = "From tomorrow, with the latest rules and your current fitness", icon = AppIcons.sync, onClick = { rebuildOpen = true })
             }
             ListRow("Plan adjustments", subtitle = "${data.adjustments.size} changes", icon = AppIcons.sync, onClick = onAdjustments)
         }
@@ -857,6 +857,8 @@ fun regeneratePlan(
 fun RebuildSheet(container: AppContainer, state: DashboardState, plan: PlanEntity, zone: ZoneId, onDismiss: () -> Unit) {
     val scope = rememberCoroutineScope()
     val today = localDateOf(state.nowMs, zone)
+    // Today's sessions may already be done (or half-planned around), so the rebuild starts tomorrow.
+    val tomorrow = today.plusDays(1)
     val planned = rememberTrainingData(container).planned
     val recurring by container.prefs.recurring.collectAsStateWithLifecycle()
     val rules = TargetsRepository.toRules(state.targetValues)
@@ -871,9 +873,9 @@ fun RebuildSheet(container: AppContainer, state: DashboardState, plan: PlanEntit
         val w = weekly.toDoubleOrNull(); val l = longest.toDoubleOrNull(); val p = parsePace(pace)
         if (w != null && l != null && p != null) com.javon.healthdash.calc.RunFitness(w, l, p, auto?.runs ?: 0, auto?.days ?: 30) else null
     }
-    val preview = remember(fitness, recurring) { regeneratePlan(plan, today, state, recurring.map { it.toFixed() }, rules, fuel, fitness) }
-    AppSheet("Rebuild plan from today", onDismiss) {
-        Text("Keeps your race, goal, days and everything already done. Regenerates the rest with the latest rules:", style = Theme.type.bodyM, color = Theme.colors.textSecondary)
+    val preview = remember(fitness, recurring) { regeneratePlan(plan, tomorrow, state, recurring.map { it.toFixed() }, rules, fuel, fitness) }
+    AppSheet("Rebuild plan from tomorrow", onDismiss) {
+        Text("Keeps your race, goal, days, today's sessions and everything already done. Regenerates from tomorrow with the latest rules:", style = Theme.type.bodyM, color = Theme.colors.textSecondary)
         listOf(
             "A steady or hard run club counts as that week's tempo",
             "Easy and long runs at your current paces; workouts build toward goal pace by the peak",
@@ -896,7 +898,7 @@ fun RebuildSheet(container: AppContainer, state: DashboardState, plan: PlanEntit
         AppButton("Rebuild", {
             scope.launch {
                 when (val r = preview) {
-                    is PlanResult.Ok -> { container.training.rebuildFrom(plan, today, r); onDismiss() }
+                    is PlanResult.Ok -> { container.training.rebuildFrom(plan, tomorrow, r); onDismiss() }
                     is PlanResult.Invalid -> error = r.reason
                     null -> error = "Enter your current running above."
                 }
