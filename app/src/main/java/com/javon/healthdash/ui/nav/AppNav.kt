@@ -71,6 +71,7 @@ object Routes {
     const val TARGETS = "settings/targets"
     const val RECURRING = "settings/recurring"
     const val GARMIN_IMPORT = "settings/garmin-import"
+    const val GARMIN_API = "settings/garmin-api"
     const val TRENDS = "trends"
     const val METRIC = "trends/{metric}/{days}"
     const val DAY = "day/{epochDay}"
@@ -188,7 +189,8 @@ fun AppNav(container: AppContainer) {
         composable(Routes.SETTINGS) {
             SettingsScreen(container, onTab, onBack = back, onSources = { nav.navigate(Routes.SOURCES) }, onKeys = { nav.navigate(Routes.KEYS) }, onTargets = { nav.navigate(Routes.TARGETS) }, onRecurring = { nav.navigate(Routes.RECURRING) }, onImport = { nav.navigate(Routes.GARMIN_IMPORT) })
         }
-        composable(Routes.SOURCES) { DataSourcesScreen(container, state, onBack = back, onSync = dash::sync) }
+        composable(Routes.SOURCES) { DataSourcesScreen(container, state, onBack = back, onSync = dash::sync, onGarminApi = { nav.navigate(Routes.GARMIN_API) }) }
+        composable(Routes.GARMIN_API) { com.javon.healthdash.ui.screens.GarminApiScreen(container, state, onBack = back) }
         composable(Routes.KEYS) { ApiKeysScreen(container, onBack = back) }
         composable(Routes.TARGETS) { TargetsScreen(container, state, onBack = back) }
         composable(Routes.GARMIN_IMPORT) { com.javon.healthdash.ui.screens.GarminImportScreen(container, state, onBack = back) }

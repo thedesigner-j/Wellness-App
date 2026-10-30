@@ -29,6 +29,7 @@ import kotlinx.coroutines.flow.combine
 import kotlinx.coroutines.flow.flatMapLatest
 import kotlinx.coroutines.flow.flow
 import kotlinx.coroutines.flow.flowOn
+import kotlinx.coroutines.flow.map
 
 /** Manual dependency container (one per process). */
 class AppContainer(context: Context) {
@@ -43,11 +44,19 @@ class AppContainer(context: Context) {
     val recognizer = FoodRecognizer(dao, keys, prefs)
     val photos = Photos(context)
     val training = com.javon.healthdash.data.TrainingRepository(dao)
+    val garmin = com.javon.healthdash.data.GarminApiSource(keys, dao)
 
-    /** Full sync on first run (90 days of history), then the last 3 days to pick up late data. */
+    /**
+     * Full sync on first run (90 days of history), then the last 3 days to pick up late data.
+     * Also pulls from the Garmin personal API when a key is set (no key: nothing changes).
+     */
     suspend fun syncNow() {
         val first = prefs.state.value.let { !it.onboardingDone } || dao.glucoseSources(0).none { it != SampleData.SOURCE }
-        health.sync(days = if (first) 90 else 3)
+        try {
+            health.sync(days = if (first) 90 else 3)
+        } finally {
+            runCatching { garmin.sync() }
+        }
     }
 
     private val ticker: Flow<Long> = flow {
@@ -66,7 +75,8 @@ class AppContainer(context: Context) {
                 .map { GlucosePoint(it.timeMs, it.mgdl) }
         }
         val steps = dao.steps(from, now + HOUR_MS)
-        val workouts = dao.workouts(from, now + HOUR_MS)
+        // The same run can come from Health Connect and the Garmin API; keep one (the API row).
+        val workouts = dao.workouts(from, now + HOUR_MS).map { com.javon.healthdash.data.GarminApiSource.dedup(it) }
         val body = combine(dao.recentBody(BodyEntity.WEIGHT), dao.recentBody(BodyEntity.BODY_FAT)) { w, f -> w to f }
         val meta = combine(targets.values, dao.syncStates()) { t, s -> t to s }
         val context = combine(dao.sleep(from), dao.readings(from), dao.labs()) { sl, rd, lb -> Triple(sl, rd, lb) }

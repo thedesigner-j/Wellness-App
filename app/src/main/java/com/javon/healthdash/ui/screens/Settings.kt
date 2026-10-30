@@ -97,7 +97,7 @@ fun SettingsScreen(container: AppContainer, onTab: (Tab) -> Unit, onBack: () -> 
     val scope = rememberCoroutineScope()
     ScreenFrame(topBar = { SmallTopBar("Settings", onBack) }, bottomBar = { BottomNav(Tab.More) { onTab(it) } }) {
         RowGroup {
-            ListRow("Data sources", subtitle = "Health Connect · glucose source", icon = AppIcons.sync, onClick = onSources)
+            ListRow("Data sources", subtitle = "Health Connect · Garmin API · glucose source", icon = AppIcons.sync, onClick = onSources)
             ListRow("Import Garmin history", subtitle = "Past runs from a Garmin Connect CSV export", icon = AppIcons.document, onClick = onImport)
             ListRow("Targets & training rules", subtitle = "Ranges, windows, plan rules, fueling table", icon = AppIcons.trends, onClick = onTargets)
             ListRow("Recurring sessions", subtitle = recurring.takeIf { it.isNotEmpty() }?.joinToString { it.name } ?: "e.g. your weekly run club", icon = AppIcons.calendar, onClick = onRecurring)
@@ -129,13 +129,28 @@ fun SettingsScreen(container: AppContainer, onTab: (Tab) -> Unit, onBack: () -> 
 }
 
 @Composable
-fun DataSourcesScreen(container: AppContainer, state: DashboardState, onBack: () -> Unit, onSync: () -> Unit) {
+fun DataSourcesScreen(container: AppContainer, state: DashboardState, onBack: () -> Unit, onSync: () -> Unit, onGarminApi: () -> Unit = {}) {
     val prefs by container.prefs.state.collectAsStateWithLifecycle()
     val glucoseOrigins = state.syncStates.firstOrNull { it.type == DataType.Glucose.name }?.origins?.split(",")?.filter { it.isNotBlank() }.orEmpty()
     ScreenFrame(topBar = { SmallTopBar("Data sources", onBack, AppIcons.sync, onSync) }) {
         Text("Read-only via Health Connect. Late data is merged when it arrives and meal responses are recomputed.", style = Theme.type.bodyM, color = Theme.colors.textSecondary)
         if (prefs.sampleData) Notice(NoticeType.Info, "Sample data is on", "Turn it off in Settings to see only your real data.")
         SourceRows(state)
+        SectionHeader("Garmin")
+        val garminKey = container.keys.present.collectAsStateWithLifecycle().value[com.javon.healthdash.data.SecureKeys.GARMIN] == true
+        val garminSync = state.syncStates.firstOrNull { it.type == com.javon.healthdash.data.GarminApiSource.TYPE }
+        RowGroup {
+            ListRow(
+                "Garmin personal API",
+                subtitle = when {
+                    !garminKey -> "Optional · full run and ride history from your own key"
+                    garminSync == null -> "Key saved · not synced yet"
+                    garminSync.error != null -> "Key saved · ${garminSync.error}"
+                    else -> "Connected · synced ${Fmt.ago(garminSync.lastSyncMs, state.nowMs)}"
+                },
+                icon = AppIcons.run, onClick = onGarminApi,
+            )
+        }
         SectionHeader("Glucose source")
         if (glucoseOrigins.size <= 1) {
             Caption(if (glucoseOrigins.isEmpty()) "No app is writing glucose yet." else "Only ${Fmt.app(glucoseOrigins.first())} writes glucose. If several CGM apps write it, choose which one to trust here.")

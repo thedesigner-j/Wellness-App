@@ -121,7 +121,7 @@ class TrainingReminderWorker(context: Context, params: WorkerParameters) : Corou
         if (slot == CHECK_IN) runCatching { c.syncNow() }
         val today = now.toLocalDate()
         val summary = com.javon.healthdash.data.todaySummary(
-            c.dao.plannedNow(), c.dao.workoutsNow(today.minusDays(1).atStartOfDay(zone).toInstant().toEpochMilli()), today, zone,
+            c.dao.plannedNow(), com.javon.healthdash.data.GarminApiSource.dedup(c.dao.workoutsNow(today.minusDays(1).atStartOfDay(zone).toInstant().toEpochMilli())), today, zone,
         )
         val (title, text) = when (slot) {
             MORNING -> "Today's training" to (summary.morningText() ?: return Result.success())

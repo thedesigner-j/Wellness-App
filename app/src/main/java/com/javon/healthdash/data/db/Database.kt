@@ -228,6 +228,8 @@ interface AppDao {
     @Query("SELECT DISTINCT source FROM glucose WHERE timeMs >= :from")
     suspend fun glucoseSources(from: Long): List<String>
 
+    @Query("SELECT * FROM sync_state WHERE type = :type") suspend fun syncState(type: String): SyncStateEntity?
+
     @Query("SELECT * FROM sync_state")
     fun syncStates(): Flow<List<SyncStateEntity>>
 

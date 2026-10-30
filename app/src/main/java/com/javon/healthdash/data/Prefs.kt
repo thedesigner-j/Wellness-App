@@ -105,7 +105,7 @@ class SecureKeys(context: Context) {
     private val sp = context.getSharedPreferences("secure_keys", Context.MODE_PRIVATE)
     private val alias = "healthdash_api_keys"
 
-    private val _present = MutableStateFlow(mapOf(CLAUDE to has(CLAUDE), USDA to has(USDA)))
+    private val _present = MutableStateFlow(presentNow())
     val present: StateFlow<Map<String, Boolean>> = _present.asStateFlow()
 
     private fun key(): SecretKey {
@@ -132,7 +132,7 @@ class SecureKeys(context: Context) {
             val out = cipher.iv + cipher.doFinal(trimmed.toByteArray(Charsets.UTF_8))
             sp.edit().putString(name, Base64.encodeToString(out, Base64.NO_WRAP)).apply()
         }
-        _present.value = mapOf(CLAUDE to has(CLAUDE), USDA to has(USDA))
+        _present.value = presentNow()
     }
 
     fun get(name: String): String? {
@@ -147,11 +147,17 @@ class SecureKeys(context: Context) {
 
     fun has(name: String) = sp.contains(name)
 
+    private fun presentNow() = mapOf(CLAUDE to has(CLAUDE), USDA to has(USDA), GARMIN to has(GARMIN))
+
     /** Last 4 characters, for display only. */
     fun hint(name: String): String? = get(name)?.takeLast(4)
 
     companion object {
         const val CLAUDE = "claude"
         const val USDA = "usda"
+        /** Garmin Connect personal API key, pasted by the user. */
+        const val GARMIN = "garmin"
+        /** Short-lived access token exchanged from [GARMIN] (cached so each sync doesn't ask for a new one). */
+        const val GARMIN_TOKEN = "garmin_token"
     }
 }
