@@ -207,16 +207,23 @@ object PlanBuilder {
     }
 
     /** Hard days: not the long day, not next to the long day or [avoidNear] (e.g. a hard run club), not next to each other. */
-    fun hardDays(available: Set<DayOfWeek>, longDay: DayOfWeek, count: Int, avoidNear: Set<DayOfWeek> = emptySet()): List<DayOfWeek> {
-        val chosen = mutableListOf<DayOfWeek>()
-        fun adjacent(a: DayOfWeek, b: DayOfWeek) = a == b || a.plus(1) == b || a.minus(1) == b
-        for (d in hardPreference) {
-            if (chosen.size >= count) break
-            if (d !in available || adjacent(d, longDay) || avoidNear.any { adjacent(it, d) }) continue
-            if (chosen.any { adjacent(it, d) }) continue
-            chosen += d
+    /**
+     * Picks [count] hard days, never next to each other or the long day. Days within [nearGap] days of [avoidNear]
+     * (e.g. a tempo-like run club) are avoided first; if that leaves too few, the usual 1-day rule applies.
+     */
+    fun hardDays(available: Set<DayOfWeek>, longDay: DayOfWeek, count: Int, avoidNear: Set<DayOfWeek> = emptySet(), nearGap: Int = 1): List<DayOfWeek> {
+        fun dist(a: DayOfWeek, b: DayOfWeek) = Math.floorMod(a.value - b.value, 7).let { minOf(it, 7 - it) }
+        fun pick(gap: Int): List<DayOfWeek> {
+            val chosen = mutableListOf<DayOfWeek>()
+            for (d in hardPreference) {
+                if (chosen.size >= count) break
+                if (d !in available || dist(d, longDay) <= 1 || avoidNear.any { dist(it, d) <= gap }) continue
+                if (chosen.any { dist(it, d) <= 1 }) continue
+                chosen += d
+            }
+            return chosen
         }
-        return chosen
+        return pick(nearGap).takeIf { it.size >= count || nearGap <= 1 } ?: pick(1)
     }
 
     fun generate(inputs: PlanInputs, rules: TrainingRules = TrainingRules(), fuel: FuelTable = FuelTable.DEFAULT): PlanResult {

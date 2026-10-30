@@ -164,6 +164,12 @@ class TrainingRepository(private val dao: AppDao) {
         dao.updatePlanned(e.copy(status = if (handled && past) "Missed" else "Planned", doneMin = null, doneMi = null))
     }
 
+    /** Corrects the distance/time of a session the watch recorded wrongly (status unchanged). Nulls clear the fix. */
+    suspend fun setActual(id: Long, minutes: Int?, miles: Double?) {
+        val e = dao.plannedNow().firstOrNull { it.id == id } ?: return
+        dao.updatePlanned(e.copy(doneMin = minutes, doneMi = miles))
+    }
+
     /** How a completed session felt (RPE 1–10). */
     suspend fun setRpe(id: Long, rpe: Int?) {
         val e = dao.plannedNow().firstOrNull { it.id == id } ?: return

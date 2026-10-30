@@ -179,14 +179,33 @@ fun recentVolume(s: DashboardState): RecentVolume {
 fun recentWeeklyMinutes(s: DashboardState, zone: ZoneId): Int = recentVolume(s).weeklyMin
 
 /** Last 30 days of Garmin runs that have a distance → weekly miles, longest run, typical pace. */
-fun runFitness(s: DashboardState): com.javon.healthdash.calc.RunFitness? {
-    val runs = s.workouts.filter { sportOf(it.exerciseType) == Sport.Run && (it.distanceM ?: 0.0) > 0 }
-        .map { com.javon.healthdash.calc.RunSample(it.startMs, it.distanceM!! / com.javon.healthdash.calc.METERS_PER_MI, ((it.endMs - it.startMs) / 1000).toInt()) }
+/** Watch workouts whose distance you corrected on the matched planned session, by workout id. */
+fun correctedRuns(planned: List<PlannedEntity>, s: DashboardState, zone: ZoneId): Map<String, PlannedEntity> =
+    planned.filter { it.status != "Done" && it.doneMi != null && it.sport != Sport.Strength.name }
+        .mapNotNull { e -> matchedWorkout(e, s, zone)?.let { it.id to e } }.toMap()
+
+/**
+ * Current running fitness from the last 30 days. Watch runs count with their distance — or the distance you
+ * corrected on the session ("Edit distance") — and runs marked done by hand count too, since the watch
+ * connection can drop runs. Typical pace comes from watch runs only (hand-logged times are rough).
+ */
+fun runFitness(s: DashboardState, planned: List<PlannedEntity> = emptyList()): com.javon.healthdash.calc.RunFitness? {
+    val zone = ZoneId.systemDefault()
+    val corrected = correctedRuns(planned, s, zone)
+    val watch = s.workouts.filter { sportOf(it.exerciseType) == Sport.Run && ((it.distanceM ?: 0.0) > 0 || it.id in corrected) }.map {
+        val fix = corrected[it.id]
+        com.javon.healthdash.calc.RunSample(it.startMs, fix?.doneMi ?: (it.distanceM!! / com.javon.healthdash.calc.METERS_PER_MI), fix?.doneMin?.times(60) ?: ((it.endMs - it.startMs) / 1000).toInt())
+    }
+    val manual = planned.filter { it.status == "Done" && it.sport == Sport.Run.name && (it.doneMi ?: it.distanceMi) != null }.map {
+        com.javon.healthdash.calc.RunSample(LocalDate.ofEpochDay(it.date).atTime(12, 0).atZone(zone).toInstant().toEpochMilli(), it.doneMi ?: it.distanceMi!!, (it.doneMin ?: it.durationMin) * 60)
+    }
     val firstData = listOfNotNull(s.workouts.minOfOrNull { it.startMs }, s.steps.minOfOrNull { it.startMs }).minOrNull() ?: s.nowMs
     val historyDays = ((s.nowMs - firstData) / (24 * 3_600_000L)).toInt()
     val rides = s.workouts.filter { sportOf(it.exerciseType) == Sport.Ride }
         .map { com.javon.healthdash.calc.RideSample(it.startMs, ((it.endMs - it.startMs) / 1000).toInt(), it.distanceM?.div(com.javon.healthdash.calc.METERS_PER_MI)) }
-    return com.javon.healthdash.calc.Fitness.fromActivities(runs, rides, s.nowMs, 30, historyDays)
+    val all = com.javon.healthdash.calc.Fitness.fromActivities(watch + manual, rides, s.nowMs, 30, historyDays) ?: return null
+    val watchPace = com.javon.healthdash.calc.Fitness.fromActivities(watch, emptyList(), s.nowMs, 30, historyDays)?.takeIf { it.runs > 0 }?.easyPaceSec
+    return all.copy(easyPaceSec = watchPace ?: all.easyPaceSec)
 }
 
 /** Last 30 days of Garmin rides with distance → weekly miles, longest ride, typical speed. */
@@ -252,6 +271,7 @@ fun TrainingScreen(
     var dayOpen by remember { mutableStateOf<LocalDate?>(null) }
     var vo2Open by remember { mutableStateOf(false) }
     var travelOpen by remember { mutableStateOf(false) }
+    var rebuildOpen by remember { mutableStateOf(false) }
     var movingId by remember { mutableStateOf<Long?>(null) }
     val scope = rememberCoroutineScope()
     val zones = zonesFor(state, zone)
@@ -280,9 +300,11 @@ fun TrainingScreen(
         }
         if (sessions.isEmpty()) null else PlanProgress.compute(
             sessions,
-            state.workouts.map { DoneActivity(localDateOf(it.startMs, zone), sportOf(it.exerciseType), ((it.endMs - it.startMs) / MINUTE_MS).toInt(), it.distanceM?.div(com.javon.healthdash.calc.METERS_PER_MI)) },
+            correctedRuns(data.planned, state, zone).let { fix ->
+                state.workouts.map { DoneActivity(localDateOf(it.startMs, zone), sportOf(it.exerciseType), fix[it.id]?.doneMin ?: ((it.endMs - it.startMs) / MINUTE_MS).toInt(), fix[it.id]?.doneMi ?: it.distanceM?.div(com.javon.healthdash.calc.METERS_PER_MI)) }
+            },
             today, LocalDate.ofEpochDay(plan.startDate), LocalDate.ofEpochDay(plan.raceDate),
-            easyPaceSec = runFitness(state)?.takeIf { it.runs > 0 }?.easyPaceSec ?: com.javon.healthdash.calc.Fitness.DEFAULT_EASY_PACE_SEC,
+            easyPaceSec = runFitness(state, data.planned)?.takeIf { it.runs > 0 }?.easyPaceSec ?: com.javon.healthdash.calc.Fitness.DEFAULT_EASY_PACE_SEC,
         )
     }
 
@@ -316,7 +338,7 @@ fun TrainingScreen(
                 val outlook = com.javon.healthdash.calc.GoalLikelihood.estimate(
                     progress.sport, raceMi, (nextPlan.goalMin ?: 0) * 60, samples, vo2,
                     trainingLeft, progress.totalWeeks - progress.weekIndex - 1, if (progress.due14 == 0) 1.0 else progress.done14.toDouble() / progress.due14,
-                    typicalPaceSec = runFitness(state)?.takeIf { it.runs > 0 }?.easyPaceSec,
+                    typicalPaceSec = runFitness(state, data.planned)?.takeIf { it.runs > 0 }?.easyPaceSec,
                 )
                 if (outlook != null) GoalOutlookCard(outlook, nextPlan.goalMin != null, progress.sport)
                 else AppCard {
@@ -411,10 +433,12 @@ fun TrainingScreen(
             if (nextPlan != null) {
                 ListRow("Race-day plan", subtitle = "Splits, fueling and carb loading", icon = AppIcons.run, onClick = { onRaceDay(nextPlan.id) })
                 ListRow("Travel or time off", subtitle = "Skip days and rebuild the plan around them", icon = AppIcons.calendar, onClick = { travelOpen = true })
+                ListRow("Rebuild plan from today", subtitle = "Apply the latest rules and your current fitness", icon = AppIcons.sync, onClick = { rebuildOpen = true })
             }
             ListRow("Plan adjustments", subtitle = "${data.adjustments.size} changes", icon = AppIcons.sync, onClick = onAdjustments)
         }
         if (travelOpen && nextPlan != null) TravelSheet(container, state, nextPlan, zone) { travelOpen = false }
+        if (rebuildOpen && nextPlan != null) RebuildSheet(container, state, nextPlan, zone) { rebuildOpen = false }
 
         val thisWeek = PlanBuilder.monday(today)
         val weeks = (-5..2).map { thisWeek.plusWeeks(it.toLong()) }
@@ -594,7 +618,7 @@ fun reviewFor(e: PlannedEntity, s: DashboardState, zone: ZoneId, zones: List<HrZ
     return com.javon.healthdash.calc.Feedback.review(
         kind, if (doneSport == Sport.Ride && sport == Sport.Run) Sport.Ride else sport, e.durationMin,
         if (doneSport == Sport.Ride && sport == Sport.Run) null else e.distanceMi,
-        ((w.endMs - w.startMs) / MINUTE_MS).toInt(), w.distanceM?.div(com.javon.healthdash.calc.METERS_PER_MI), w.avgHr, zones,
+        e.doneMin ?: ((w.endMs - w.startMs) / MINUTE_MS).toInt(), e.doneMi ?: w.distanceM?.div(com.javon.healthdash.calc.METERS_PER_MI), w.avgHr, zones,
     )
 }
 
@@ -608,6 +632,7 @@ fun SessionCard(container: AppContainer, state: DashboardState, e: PlannedEntity
     val openStrength = LocalOpenStrength.current
     var marking by remember { mutableStateOf(false) }
     var moving by remember { mutableStateOf(false) }
+    var correcting by remember { mutableStateOf(false) }
     val today = localDateOf(state.nowMs, zone)
     val date = LocalDate.ofEpochDay(e.date)
     val status = sessionStatus(e, state, zone)
@@ -616,6 +641,8 @@ fun SessionCard(container: AppContainer, state: DashboardState, e: PlannedEntity
     val canMark = status != WorkoutCardStatus.Completed && !date.isAfter(today)
     val canMove = status != WorkoutCardStatus.Completed && e.status != "Dropped" && !date.isBefore(today) && WorkoutKind.valueOf(e.kind).let { it != WorkoutKind.Race && !it.recurring }
     val review = if (status == WorkoutCardStatus.Completed) reviewFor(e, state, zone, zones) else null
+    // The watch run that completed this (run/ride) session, if any — its distance can be corrected.
+    val watchRun = if (status == WorkoutCardStatus.Completed && !strength && !manual) matchedWorkout(e, state, zone) else null
     val detail = when {
         manual -> "Marked done" + (listOfNotNull(e.doneMi?.let { "${Fmt.one(it)} mi" }, e.doneMin?.let { "$it min" }).takeIf { it.isNotEmpty() }?.joinToString(" · ", " · ") ?: " as planned") + " · " + sessionDetail(e, zones)
         doneAsRide(e, state, zone) -> "Done as a ride · " + sessionDetail(e, zones)
@@ -626,8 +653,8 @@ fun SessionCard(container: AppContainer, state: DashboardState, e: PlannedEntity
         onClick = if (strength) ({ openStrength(e.id) }) else null,
         action = when { manual -> "Undo complete"; canMark -> "Mark complete"; else -> null },
         onAction = { if (manual) scope.launch { container.training.undoDone(e.id, zone) } else marking = true },
-        secondary = when { strength && status != WorkoutCardStatus.Completed -> "Open workout"; canMove -> "Move"; else -> null },
-        onSecondary = { if (strength && status != WorkoutCardStatus.Completed) openStrength(e.id) else moving = true },
+        secondary = when { strength && status != WorkoutCardStatus.Completed -> "Open workout"; canMove -> "Move"; watchRun != null -> "Edit distance"; else -> null },
+        onSecondary = { if (strength && status != WorkoutCardStatus.Completed) openStrength(e.id) else if (canMove) moving = true else correcting = true },
         extra = {
             if (review != null) SessionReviewBlock(review, Sport.valueOf(e.sport))
             if (status == WorkoutCardStatus.Completed && !strength) EffortPicker(e.rpe) { r -> scope.launch { container.training.setRpe(e.id, r) } }
@@ -635,6 +662,11 @@ fun SessionCard(container: AppContainer, state: DashboardState, e: PlannedEntity
     )
     if (marking) MarkDoneSheet(e, onDismiss = { marking = false }) { min, mi ->
         scope.launch { container.training.markDone(e.id, min, mi); marking = false }
+    }
+    watchRun?.let { w ->
+        if (correcting) MarkDoneSheet(e, onDismiss = { correcting = false }, correcting = ((w.endMs - w.startMs) / MINUTE_MS).toInt() to w.distanceM?.div(com.javon.healthdash.calc.METERS_PER_MI)) { min, mi ->
+            scope.launch { container.training.setActual(e.id, min, mi); correcting = false }
+        }
     }
     if (moving) MoveSheet(container, state, e, zone, onDismiss = { moving = false })
 }
@@ -706,21 +738,31 @@ fun MoveSheet(container: AppContainer, state: DashboardState, e: PlannedEntity, 
 }
 
 @Composable
-fun MarkDoneSheet(e: PlannedEntity, onDismiss: () -> Unit, onSave: (Int?, Double?) -> Unit) {
+fun MarkDoneSheet(
+    e: PlannedEntity, onDismiss: () -> Unit,
+    /** Editing a watch run: prefill with what the watch recorded and always save exact values. */
+    correcting: Pair<Int, Double?>? = null,
+    onSave: (Int?, Double?) -> Unit,
+) {
     val endurance = e.sport != Sport.Strength.name
-    var minutes by remember { mutableStateOf(e.durationMin.toString()) }
-    var miles by remember { mutableStateOf(e.distanceMi?.let { Fmt.one(it) } ?: "") }
-    AppSheet("Mark complete", onDismiss) {
+    var minutes by remember { mutableStateOf((correcting?.first ?: e.doneMin ?: e.durationMin).toString()) }
+    var miles by remember { mutableStateOf((e.doneMi ?: correcting?.second ?: e.distanceMi)?.let { Fmt.one(it) } ?: "") }
+    AppSheet(if (correcting != null) "Edit distance" else "Mark complete", onDismiss) {
         Text(sessionTitle(e), style = Theme.type.labelL, color = Theme.colors.textPrimary)
-        Text("Worked out without the watch? Log what you did — it counts toward your plan, miles and goal outlook.", style = Theme.type.bodyS, color = Theme.colors.textSecondary)
+        Text(
+            if (correcting != null) "Watch dropped part of the run? Enter what you actually ran — it's used for your progress, long-run history and plan sizing."
+            else "Worked out without the watch? Log what you did — it counts toward your plan, miles and goal outlook.",
+            style = Theme.type.bodyS, color = Theme.colors.textSecondary,
+        )
         AppTextField("Time", minutes, { minutes = it.filter(Char::isDigit).take(3) }, suffix = "min", keyboardType = KeyboardType.Number)
         if (endurance) AppTextField("Distance", miles, { miles = it }, suffix = "mi", keyboardType = KeyboardType.Decimal,
             error = if (miles.isNotBlank() && miles.toDoubleOrNull() == null) "Enter miles, e.g. 4.5" else null)
         val m = minutes.toIntOrNull()?.takeIf { it > 0 }
         val d = if (endurance) miles.toDoubleOrNull()?.takeIf { it > 0 } else null
         AppButton("Save", {
-            // Store only what differs from the plan; null = as planned.
-            onSave(m?.takeIf { it != e.durationMin }, d?.takeIf { e.distanceMi == null || kotlin.math.abs(it - e.distanceMi) > 0.01 })
+            // Marking done stores only what differs from the plan (null = as planned); a correction stores exact values.
+            if (correcting != null) onSave(m, d)
+            else onSave(m?.takeIf { it != e.durationMin }, d?.takeIf { e.distanceMi == null || kotlin.math.abs(it - e.distanceMi) > 0.01 })
         }, Modifier.fillMaxWidth(), enabled = m != null && (miles.isBlank() || d != null))
         AppButton("Cancel", onDismiss, Modifier.fillMaxWidth(), style = ButtonStyle.Ghost)
     }
@@ -764,7 +806,8 @@ fun TravelSheet(container: AppContainer, state: DashboardState, plan: PlanEntity
     }
 
     fun ms(d: LocalDate) = d.atStartOfDay(zone).toInstant().toEpochMilli()
-    val skipped = rememberTrainingData(container).planned.count { it.planId == plan.id && it.status == "Planned" && LocalDate.ofEpochDay(it.date) in from..to }
+    val planned = rememberTrainingData(container).planned
+    val skipped = planned.count { it.planId == plan.id && it.status == "Planned" && LocalDate.ofEpochDay(it.date) in from..to }
     AppSheet("Travel or time off", onDismiss) {
         RowGroup {
             ListRow("First day off", trailing = Fmt.dayShort(ms(from)), icon = AppIcons.calendar, onClick = { picking = 0 })
@@ -783,11 +826,9 @@ fun TravelSheet(container: AppContainer, state: DashboardState, plan: PlanEntity
             scope.launch {
                 error = null
                 if (rebuild && back.isBefore(race)) {
-                    val inputs = plan.inputs().copy(startDate = back, fixed = recurring.map { it.toFixed() })
-                    val result = if (inputs.race.sport == Sport.Ride) rideFitness(state)?.let { com.javon.healthdash.calc.RidePlanBuilder.generate(inputs, it, rules, fuel).first }
-                    else runFitness(state)?.let { com.javon.healthdash.calc.RunPlanBuilder.generate(inputs, it, rules, com.javon.healthdash.calc.RunRules(), fuel).first }
+                    val result = regeneratePlan(plan, back, state, recurring.map { it.toFixed() }, rules, fuel, runFitness(state, planned))
                     when (result) {
-                        null -> { error = "Needs recent ${if (inputs.race.sport == Sport.Ride) "rides" else "runs"} from Garmin to size the plan. Days were not skipped."; return@launch }
+                        null -> { error = "Needs recent ${if (plan.inputs().race.sport == Sport.Ride) "rides" else "runs"} from Garmin to size the plan. Days were not skipped."; return@launch }
                         is PlanResult.Invalid -> { error = result.reason + ". Days were not skipped."; return@launch }
                         is PlanResult.Ok -> { container.training.skip(plan.id, from, to); container.training.rebuildFrom(plan, back, result) }
                     }
@@ -795,5 +836,71 @@ fun TravelSheet(container: AppContainer, state: DashboardState, plan: PlanEntity
                 onDismiss()
             }
         }, Modifier.fillMaxWidth())
+    }
+}
+
+/** Regenerates [plan] from [from] with the current rules (same race, goal and days). Null when there's no fitness to size it. */
+fun regeneratePlan(
+    plan: PlanEntity, from: LocalDate, state: DashboardState, fixed: List<com.javon.healthdash.calc.FixedSession>,
+    rules: com.javon.healthdash.calc.TrainingRules, fuel: com.javon.healthdash.calc.FuelTable, run: com.javon.healthdash.calc.RunFitness?,
+): PlanResult? {
+    val inputs = plan.inputs().copy(startDate = from, fixed = fixed)
+    return if (inputs.race.sport == Sport.Ride) rideFitness(state)?.let { com.javon.healthdash.calc.RidePlanBuilder.generate(inputs, it, rules, fuel).first }
+    else run?.let { com.javon.healthdash.calc.RunPlanBuilder.generate(inputs, it, rules, com.javon.healthdash.calc.RunRules(), fuel).first }
+}
+
+/**
+ * Rebuilds the rest of the plan from today with the current rules (run club counts as the tempo, paces from
+ * current fitness). Shows — and lets you correct — the fitness it sizes the plan from.
+ */
+@Composable
+fun RebuildSheet(container: AppContainer, state: DashboardState, plan: PlanEntity, zone: ZoneId, onDismiss: () -> Unit) {
+    val scope = rememberCoroutineScope()
+    val today = localDateOf(state.nowMs, zone)
+    val planned = rememberTrainingData(container).planned
+    val recurring by container.prefs.recurring.collectAsStateWithLifecycle()
+    val rules = TargetsRepository.toRules(state.targetValues)
+    val fuel = TargetsRepository.toFuelTable(state.targetValues)
+    val auto = runFitness(state, planned)
+    var weekly by remember(auto) { mutableStateOf(auto?.let { Fmt.one(it.weeklyMiles) } ?: "") }
+    var longest by remember(auto) { mutableStateOf(auto?.let { Fmt.one(it.longestRunMi) } ?: "") }
+    var pace by remember(auto) { mutableStateOf(auto?.let { com.javon.healthdash.calc.PaceMath.fmt(it.easyPaceSec) } ?: "") }
+    var error by remember { mutableStateOf<String?>(null) }
+    val isRide = com.javon.healthdash.calc.RaceType.valueOf(plan.raceType).sport == Sport.Ride
+    val fitness = run {
+        val w = weekly.toDoubleOrNull(); val l = longest.toDoubleOrNull(); val p = parsePace(pace)
+        if (w != null && l != null && p != null) com.javon.healthdash.calc.RunFitness(w, l, p, auto?.runs ?: 0, auto?.days ?: 30) else null
+    }
+    val preview = remember(fitness, recurring) { regeneratePlan(plan, today, state, recurring.map { it.toFixed() }, rules, fuel, fitness) }
+    AppSheet("Rebuild plan from today", onDismiss) {
+        Text("Keeps your race, goal, days and everything already done. Regenerates the rest with the latest rules:", style = Theme.type.bodyM, color = Theme.colors.textSecondary)
+        listOf(
+            "A steady or hard run club counts as that week's tempo",
+            "Easy and long runs at your current paces; workouts build toward goal pace by the peak",
+            "Long runs start from your longest recent run",
+        ).forEach { Text("• $it", style = Theme.type.bodyS, color = Theme.colors.textPrimary) }
+        if (!isRide) {
+            Text("Your running now — fix anything the watch missed", style = Theme.type.labelL, color = Theme.colors.textPrimary)
+            AppTextField("Weekly mileage", weekly, { weekly = it }, suffix = "mi", keyboardType = androidx.compose.ui.text.input.KeyboardType.Decimal)
+            AppTextField("Longest run, last 30 days", longest, { longest = it }, suffix = "mi", keyboardType = androidx.compose.ui.text.input.KeyboardType.Decimal)
+            AppTextField("Typical easy pace", pace, { pace = it }, suffix = "/mi", placeholder = "12:00",
+                error = if (pace.isNotBlank() && parsePace(pace) == null) "Use m:ss, e.g. 12:00" else null)
+        }
+        (preview as? PlanResult.Ok)?.let { ok ->
+            ok.weeks.flatMap { it.sessions }.firstOrNull { it.kind == WorkoutKind.Long && !it.date.isBefore(today) }?.let { l ->
+                Notice(NoticeType.Info, "Next long run · ${Fmt.dayShort(l.date.atStartOfDay(zone).toInstant().toEpochMilli())}", l.detail ?: "")
+            }
+        }
+        (preview as? PlanResult.Invalid)?.let { Notice(NoticeType.Info, "Can't rebuild", it.reason) }
+        error?.let { Notice(NoticeType.Info, "Couldn't rebuild", it) }
+        AppButton("Rebuild", {
+            scope.launch {
+                when (val r = preview) {
+                    is PlanResult.Ok -> { container.training.rebuildFrom(plan, today, r); onDismiss() }
+                    is PlanResult.Invalid -> error = r.reason
+                    null -> error = "Enter your current running above."
+                }
+            }
+        }, Modifier.fillMaxWidth(), enabled = preview is PlanResult.Ok)
     }
 }

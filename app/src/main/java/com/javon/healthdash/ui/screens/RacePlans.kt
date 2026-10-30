@@ -207,9 +207,9 @@ fun PlanBuilderScreen(container: AppContainer, state: DashboardState, onClose: (
     var longestMi by remember { mutableStateOf("") }
     var easyPace by remember { mutableStateOf("") }
     var fitEdited by remember { mutableStateOf(false) }
-    val garminFit = runFitness(state)
+    val garminFit = runFitness(state, data.planned)
     androidx.compose.runtime.LaunchedEffect(garminFit) {
-        val f = runFitness(state)
+        val f = runFitness(state, data.planned)
         if (!fitEdited && f != null) { weeklyMi = Fmt.one(f.weeklyMiles); longestMi = Fmt.one(f.longestRunMi); easyPace = PaceMath.fmt(f.easyPaceSec) }
     }
     val fitness = run {
@@ -441,15 +441,15 @@ fun PlanBuilderScreen(container: AppContainer, state: DashboardState, onClose: (
                                 Text("Your paces · goal ${PaceMath.fmtTime(summary.goalSec)}", style = Theme.type.labelL, color = Theme.colors.textPrimary)
                                 MetricTiles(
                                     listOf(
-                                        "Goal pace" to "${PaceMath.fmt(summary.paces.race)}/mi",
-                                        "Tempo" to "${PaceMath.fmt(summary.paces.tempo)}/mi",
-                                        "800 m repeats" to "${PaceMath.fmt(summary.paces.interval)}/mi",
+                                        "Goal pace" to "${PaceMath.fmt(summary.goalPaces.race)}/mi",
+                                        "Tempo" to if (summary.paces.tempo != summary.goalPaces.tempo) "${PaceMath.fmt(summary.paces.tempo)} → ${PaceMath.fmt(summary.goalPaces.tempo)}" else "${PaceMath.fmt(summary.paces.tempo)}/mi",
+                                        "800 m repeats" to if (summary.paces.interval != summary.goalPaces.interval) "${PaceMath.fmt(summary.paces.interval)} → ${PaceMath.fmt(summary.goalPaces.interval)}" else "${PaceMath.fmt(summary.paces.interval)}/mi",
                                         "Long runs" to PaceMath.fmtRange(summary.paces.long),
                                         "Easy" to PaceMath.fmtRange(summary.paces.easy),
                                         "Recovery" to PaceMath.fmtRange(summary.paces.recovery),
                                     ),
                                 )
-                                Caption("From your goal time: tempo ≈ half-marathon pace and repeats ≈ 5K pace (Riegel equivalents).")
+                                Caption(if (summary.paces != summary.goalPaces) "Easy and long runs use your current paces. Workouts start at today's fitness and step to goal pace (tempo ≈ half-marathon, repeats ≈ 5K equivalents) by week ${summary.peakWeek + 1}." else "From your goal time: tempo ≈ half-marathon pace and repeats ≈ 5K pace (Riegel equivalents).")
                             }
                             MetricTiles(
                                 listOf(

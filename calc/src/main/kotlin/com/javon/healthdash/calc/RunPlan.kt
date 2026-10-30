@@ -116,6 +116,14 @@ object PaceMath {
     /** Marathon time a runner's current easy pace typically supports (easy ≈ MP + 75 s/mi). */
     fun predictedMarathonSec(f: RunFitness): Int = ((f.easyPaceSec - 75) * MARATHON_MI).roundToInt()
 
+    /** Paces part-way from [from] (t = 0) to [to] (t = 1). */
+    fun blend(from: Paces, to: Paces, t: Double): Paces {
+        val k = t.coerceIn(0.0, 1.0)
+        fun b(a: Int, z: Int) = (a + (z - a) * k).roundToInt()
+        fun r(a: IntRange, z: IntRange) = b(a.first, z.first)..b(a.last, z.last)
+        return Paces(b(from.race, to.race), r(from.easy, to.easy), r(from.long, to.long), b(from.tempo, to.tempo), b(from.interval, to.interval), r(from.recovery, to.recovery))
+    }
+
     fun fmt(sec: Int): String = "${sec / 60}:${"%02d".format(sec % 60)}"
     fun fmtRange(r: IntRange) = "${fmt(r.first)}–${fmt(r.last)}"
     fun fmtTime(sec: Int): String = if (sec >= 3600) "${sec / 3600}:${"%02d".format(sec % 3600 / 60)}:${"%02d".format(sec % 60)}" else fmt(sec)
@@ -132,11 +140,15 @@ data class RunRules(
 )
 
 data class RunPlanSummary(
+    /** Week-1 paces (from current fitness when that's slower than the goal). */
     val paces: Paces,
     val goalSec: Int,
     val peakLongMi: Double,
     val peakWeeklyMi: Double,
     val warnings: List<String>,
+    /** Goal paces, reached for quality sessions by [peakWeek]. */
+    val goalPaces: Paces = paces,
+    val peakWeek: Int = 0,
 )
 
 object RunPlanBuilder {
@@ -170,7 +182,13 @@ object RunPlanBuilder {
         // Finish goal: what current easy pace supports at this distance (Riegel from the marathon equivalent).
         val predictedSec = PaceMath.riegel(PaceMath.predictedMarathonSec(fitness).toDouble(), MARATHON_MI, if (relay) raceMi / 3 else raceMi) * (if (relay) 3 else 1)
         val goalSec = inputs.goalMin?.times(60) ?: predictedSec.roundToInt()
-        val paces = if (relay) PaceMath.forGoal(raceMi / 3, (goalSec / 3.0).roundToInt()) else PaceMath.forGoal(raceMi, goalSec)
+        fun pacesAt(sec: Int) = if (relay) PaceMath.forGoal(raceMi / 3, (sec / 3.0).roundToInt()) else PaceMath.forGoal(raceMi, sec)
+        val goalPaces = pacesAt(goalSec)
+        // Start from current fitness when it's slower than the goal: easy/long/recovery stay at fitness paces,
+        // tempo/intervals/goal-pace work step from fitness to goal by the last build/peak week.
+        val fitPaces = pacesAt(predictedSec.roundToInt())
+        val behind = fitPaces.race > goalPaces.race
+        var paces = if (behind) fitPaces else goalPaces
         val raceLabel = if (inputs.race.custom) "${r1(raceMi)}-mile race" else inputs.race.label
         val phases = PlanBuilder.phases(weeks, taper)
         val warnings = mutableListOf<String>()
@@ -217,14 +235,18 @@ object RunPlanBuilder {
         }
         if (inputs.goalMin != null) {
             val predicted = predictedSec
-            if (goalSec < predicted * 0.93) warnings += "Ambitious goal: your current easy pace (${PaceMath.fmt(fitness.easyPaceSec)}/mi) usually supports about ${PaceMath.fmtTime(predicted.roundToInt())}. The plan trains at your goal paces — re-check after a few weeks."
+            if (goalSec < predicted * 0.93) warnings += "Ambitious goal: your current easy pace (${PaceMath.fmt(fitness.easyPaceSec)}/mi) usually supports about ${PaceMath.fmtTime(predicted.roundToInt())}. The plan starts at your current paces and builds toward goal pace — re-check after a few weeks."
         }
 
         // ---- Sessions ----
         val out = mutableListOf<PlanWeek>()
         var mpFinish = 0.0
+        fun pacesFor(w: Int): Paces = if (!behind) goalPaces else
+            PaceMath.blend(fitPaces, goalPaces, if (peakWeek == 0) 1.0 else w.toDouble() / peakWeek)
+                .copy(easy = fitPaces.easy, long = fitPaces.long, recovery = fitPaces.recovery)
         for (w in 0 until weeks) {
             val phase = phases[w]
+            paces = pacesFor(w)
             val wkStart = first.plusWeeks(w.toLong())
             fun date(d: DayOfWeek) = wkStart.plusDays((d.value - 1).toLong())
             val sessions = mutableListOf<PlannedSession>()
@@ -253,14 +275,15 @@ object RunPlanBuilder {
                 }
                 if (f.sport == Sport.Run) used += f.distanceMi ?: (f.durationMin * 60.0 / ((paces.easy.first + paces.easy.last) / 2))
             }
-            val hardClubDays = if (easyOnly) emptySet() else clubs.filter { it.intensity == Intensity.Hard }.map { it.day }.toSet()
+            // A steady or hard club run is a quality session (e.g. a steady tempo): it replaces the plan's tempo.
+            val hardClubDays = if (easyOnly) emptySet() else clubs.filter { it.sport == Sport.Run && it.intensity != Intensity.Easy }.map { it.day }.toSet()
 
             if (phase == Phase.Race) {
                 val rd = inputs.raceDate.dayOfWeek
                 val shake = free.filter { it.value < rd.value }.sortedBy { it.value }.takeLast(2 - clubs.size.coerceAtMost(1))
                 shake.forEachIndexed { i, d -> easyRun(d, if (i == shake.lastIndex) 2.0 else 4.0, WorkoutKind.Recovery) }
                 sessions += PlannedSession(inputs.raceDate, Sport.Run, WorkoutKind.Race, (goalSec / 60.0).roundToInt(), fuel.note(goalSec / 60, Intensity.Hard), null, raceMi,
-                    if (relay) "Relay legs · goal ${PaceMath.fmtTime(goalSec)} total · ~${PaceMath.fmt(paces.race)}/mi" else "$raceLabel · goal ${PaceMath.fmtTime(goalSec)} · ${PaceMath.fmt(paces.race)}/mi")
+                    if (relay) "Relay legs · goal ${PaceMath.fmtTime(goalSec)} total · ~${PaceMath.fmt(goalPaces.race)}/mi" else "$raceLabel · goal ${PaceMath.fmtTime(goalSec)} · ${PaceMath.fmt(goalPaces.race)}/mi")
                 out += PlanWeek(w, wkStart, phase, (sessions.sumOf { it.durationMin }), false, sessions.sortedBy { it.date })
                 continue
             }
@@ -280,13 +303,13 @@ object RunPlanBuilder {
                 else "${r1(longMi)} mi @ ${PaceMath.fmtRange(paces.long)}/mi · conversational")
 
             val hardCount = when (phase) { Phase.Base -> 1; Phase.Build, Phase.Peak -> if (lighter) 1 else 2; else -> 1 } - hardClubDays.size
-            val hard = PlanBuilder.hardDays(free - longDay, longDay, hardCount.coerceAtLeast(0), hardClubDays)
+            val hard = PlanBuilder.hardDays(free - longDay, longDay, hardCount.coerceAtLeast(0), hardClubDays, nearGap = 2)
             // Quality sessions scale with the week's mileage (about 15–18% each), so they grow as the plan grows.
             val target = targets[w]
             hard.forEachIndexed { i, d ->
                 val warm = 1.5
                 val cool = 1.0
-                if (i == 0) {
+                if (i == 0 && hardClubDays.isEmpty()) {
                     val t = r1((target * 0.18 - warm - cool).coerceIn(2.0, 6.0)).let { if (phase == Phase.Taper) min(it, 3.0) else it }
                     val miles = warm + t + cool
                     val sec = ((warm + cool) * paces.easy.last + t * paces.tempo).roundToInt()
@@ -327,7 +350,7 @@ object RunPlanBuilder {
             out += PlanWeek(w, wkStart, phase, sessions.filter { it.sport == Sport.Run }.sumOf { it.durationMin }, lighter, sessions.sortedWith(compareBy({ it.date }, { it.sport == Sport.Strength })))
         }
         val peakMiles = out.maxOf { wk -> wk.sessions.filter { it.sport == Sport.Run && it.kind != WorkoutKind.Race }.sumOf { it.distanceMi ?: 0.0 } }
-        return PlanResult.Ok(out) to RunPlanSummary(paces, goalSec, peakLong, peakMiles, warnings)
+        return PlanResult.Ok(out) to RunPlanSummary(pacesFor(0), goalSec, peakLong, peakMiles, warnings, goalPaces, peakWeek)
     }
 
     fun weekMiles(w: PlanWeek) = w.sessions.filter { it.sport == Sport.Run }.sumOf { it.distanceMi ?: 0.0 }

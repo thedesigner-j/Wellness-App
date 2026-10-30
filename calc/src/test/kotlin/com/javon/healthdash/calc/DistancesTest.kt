@@ -44,7 +44,9 @@ class DistancesTest {
         val weeks = (r as PlanResult.Ok).weeks
         assertThat(s!!.peakLongMi).isEqualTo(14.0)
         // 1:50 half: 6600 s / 13.1094 mi = 503 s → 8:23/mi
-        assertThat(s.paces.race).isEqualTo(503)
+        assertThat(s.goalPaces.race).isEqualTo(503)
+        // Current fitness (easy 10:00 → ~1:50:00) is a hair slower than the goal, so week 1 starts there.
+        assertThat(s.paces.race).isAtLeast(503)
         val race = weeks.last().sessions.single { it.kind == WorkoutKind.Race }
         assertThat(race.distanceMi).isWithin(1e-6).of(HALF_MI)
         assertThat(race.detail).startsWith("Half marathon · goal 1:50:00")

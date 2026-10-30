@@ -74,15 +74,17 @@ class RunPlanTest {
 
     @Test fun workoutsHaveStructureAndGoalPaces() {
         val sessions = (build().first as PlanResult.Ok).weeks.flatMap { it.sessions }
-        val tempo = sessions.first { it.kind == WorkoutKind.Tempo }
-        assertThat(tempo.detail).contains("@ 8:14/mi (tempo)")
-        val intervals = sessions.first { it.kind == WorkoutKind.Intervals }
-        assertThat(intervals.detail).contains("× 800 m @ 7:33/mi")
-        val mpLong = sessions.first { it.kind == WorkoutKind.Long && it.detail!!.contains("goal pace") }
+        // Fitness (easy 10:00 → ~3:49) is behind the 3:45 goal: quality paces start there and reach goal pace by the peak.
+        val tempo = sessions.filter { it.kind == WorkoutKind.Tempo }
+        assertThat(tempo.first().detail).doesNotContain("@ 8:14/mi")
+        assertThat(tempo.last().detail).contains("@ 8:14/mi (tempo)")
+        val intervals = sessions.filter { it.kind == WorkoutKind.Intervals }
+        assertThat(intervals.last().detail).contains("× 800 m @ 7:33/mi")
+        val mpLong = sessions.last { it.kind == WorkoutKind.Long && it.detail!!.contains("goal pace") }
         assertThat(mpLong.detail).contains("@ 8:35/mi")
-        // Duration comes from distance × pace: an easy 5 mi at ~9:50/mi ≈ 49 min.
+        // Easy runs stay at current-fitness pace (MP 8:45 + 60–90 s → ~10:00/mi): 5 mi ≈ 50 min.
         val easy = sessions.first { it.kind == WorkoutKind.Easy }
-        assertThat(easy.durationMin.toDouble()).isWithin(2.0).of(easy.distanceMi!! * 590 / 60)
+        assertThat(easy.durationMin.toDouble()).isWithin(2.0).of(easy.distanceMi!! * 600 / 60)
         val raceDay = sessions.single { it.kind == WorkoutKind.Race }
         assertThat(raceDay.date).isEqualTo(race)
         assertThat(raceDay.durationMin).isEqualTo(225)
@@ -131,6 +133,37 @@ class RunPlanTest {
         assertThat(ridesOnly.runs).isEqualTo(0)
         assertThat(ridesOnly.weeklyMiles).isWithin(1e-9).of(10.0)
         assertThat(Fitness.fromRuns(emptyList(), now)).isNull()
+    }
+
+    @Test fun steadyRunClubIsTheTempo() {
+        // Javon's setup: steady run club Tuesday, long run Saturday, runs Wed/Thu/Sun.
+        val club = FixedSession(TUESDAY, Sport.Run, "Run club", 6.3, 70, Intensity.Moderate)
+        val i = inputs.copy(fixed = listOf(club), days = setOf(WEDNESDAY, THURSDAY, SATURDAY, SUNDAY), longDay = SATURDAY)
+        val weeks = (build(i).first as PlanResult.Ok).weeks
+        // No plan tempo while the club is a steady run (in the taper the club goes easy and a short tempo returns).
+        assertThat(weeks.filter { it.phase != Phase.Taper }.flatMap { it.sessions }.none { it.kind == WorkoutKind.Tempo }).isTrue()
+        weeks.filter { it.phase == Phase.Base }.forEach { w -> assertThat(w.sessions.none { it.kind == WorkoutKind.Intervals }).isTrue() }
+        // Full build/peak weeks: exactly one interval session, never the day after the club.
+        weeks.filter { (it.phase == Phase.Build || it.phase == Phase.Peak) && !it.lighter }.forEach { w ->
+            val iv = w.sessions.filter { it.kind == WorkoutKind.Intervals }
+            assertThat(iv).hasSize(1)
+            assertThat(iv.single().date.dayOfWeek).isNotEqualTo(WEDNESDAY)
+        }
+    }
+
+    @Test fun pacesStartAtFitnessAndReachGoalAtPeak() {
+        val (r, s) = build(inputs.copy(goalMin = 215)) // 3:35 goal vs ~3:49 fitness
+        val weeks = (r as PlanResult.Ok).weeks
+        val fit = PaceMath.forGoal(MARATHON_MI, PaceMath.predictedMarathonSec(fitness))
+        // Easy runs never faster than current fitness supports.
+        assertThat(s!!.paces.easy).isEqualTo(fit.easy)
+        assertThat(s.paces.tempo).isGreaterThan(s.goalPaces.tempo)
+        fun tempoAt(w: Int) = weeks[w].sessions.firstOrNull { it.kind == WorkoutKind.Tempo }?.detail
+        assertThat(tempoAt(s.peakWeek)).contains("@ ${PaceMath.fmt(s.goalPaces.tempo)}/mi (tempo)")
+        assertThat(tempoAt(0)).contains("@ ${PaceMath.fmt(fit.tempo)}/mi (tempo)")
+        // A runner already faster than the goal trains at goal paces from week 1.
+        val fast = build(inputs.copy(goalMin = 260)).second!!
+        assertThat(fast.paces).isEqualTo(fast.goalPaces)
     }
 
     @Test fun runClubCountsInMileage() {

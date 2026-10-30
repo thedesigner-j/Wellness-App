@@ -134,7 +134,7 @@ object RidePlanBuilder {
                 if (!dt.isBefore(inputs.startDate)) sessions += PlannedSession(dt, f.sport, kind, f.durationMin, fuel.note(f.durationMin, kind.intensity), f.name, f.distanceMi, "Your ${f.name.lowercase()}" + if (easyOnly) " · keep it easy this week" else "")
                 if (f.sport == Sport.Ride) used += f.distanceMi ?: (f.durationMin / 60.0 * endurance)
             }
-            val hardClubDays = if (easyOnly) emptySet() else clubs.filter { it.intensity == Intensity.Hard }.map { it.day }.toSet()
+            val hardClubDays = if (easyOnly) emptySet() else clubs.filter { it.sport == Sport.Ride && it.intensity != Intensity.Easy }.map { it.day }.toSet()
 
             if (phase == Phase.Race) {
                 val rd = inputs.raceDate.dayOfWeek
@@ -153,9 +153,9 @@ object RidePlanBuilder {
             used += ride(longDay, WorkoutKind.Long, longs[w], endurance, "${longs[w].toInt()} mi @ ${fmtRange(sp.endurance)} mph · steady, fuel from the first hour")
 
             val hardCount = when (phase) { Phase.Base -> 1; Phase.Build, Phase.Peak -> if (lighter) 1 else 2; else -> 1 } - hardClubDays.size
-            val hard = PlanBuilder.hardDays(free - longDay, longDay, hardCount.coerceAtLeast(0), hardClubDays)
+            val hard = PlanBuilder.hardDays(free - longDay, longDay, hardCount.coerceAtLeast(0), hardClubDays, nearGap = 2)
             hard.forEachIndexed { i, d ->
-                if (i == 0) {
+                if (i == 0 && hardClubDays.isEmpty()) {
                     val blocks = if (phase == Phase.Taper) 2 else if (targets[w] > 80) 3 else 2
                     val work = if (phase == Phase.Taper) 10 else 15
                     val minutes = 25 + blocks * work + (blocks - 1) * 5
