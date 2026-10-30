@@ -129,10 +129,13 @@ fun WeekStrip(days: List<WeekDay>, onDay: (WeekDay) -> Unit) {
                         else -> Text("${d.date.dayOfMonth}", style = Theme.type.labelS, color = c.textPrimary)
                     }
                 }
+                // Every session that day: "4.5 + Str", so a second session is never hidden.
+                val labels = d.sessions.sortedBy { if (it.sport == com.javon.healthdash.calc.Sport.Strength) 1 else 0 }.map { s ->
+                    if (s.sport == com.javon.healthdash.calc.Sport.Strength) "Str" else s.distanceMi?.let { com.javon.healthdash.calc.TodaySummary.mi(it) } ?: "${s.durationMin}′"
+                }
                 Text(
-                    d.sessions.firstOrNull { it.sport != com.javon.healthdash.calc.Sport.Strength }?.let { s -> s.distanceMi?.let { "${if (it % 1.0 == 0.0) it.toInt().toString() else "%.1f".format(it)}" } ?: "${s.durationMin}′" }
-                        ?: if (d.sessions.isNotEmpty()) "Str" else "",
-                    style = Theme.type.caption, color = c.textTertiary, textAlign = TextAlign.Center, maxLines = 1,
+                    labels.joinToString("+"),
+                    style = Theme.type.caption, color = if (labels.size > 1) c.textAccent else c.textTertiary, textAlign = TextAlign.Center, maxLines = 2,
                 )
             }
         }
@@ -204,5 +207,56 @@ fun GoalOutlookCard(o: com.javon.healthdash.calc.GoalOutlook, hasGoal: Boolean, 
                 else -> "Your goal is ahead of your current trend. Keep training — or consider adjusting the goal in Race plans."
             },
         )
+    }
+}
+
+/**
+ * Today's training as a checklist: every session (runs, rides, strength, club), done or open, total time, and a
+ * late-day warning when something is still open. [compact] drops the warning for the Today tab.
+ */
+@Composable
+fun TodayTrainingCard(
+    s: com.javon.healthdash.calc.TodaySummary,
+    hour: Int,
+    compact: Boolean = false,
+    onItem: (com.javon.healthdash.calc.TodayItem) -> Unit = {},
+    onMove: ((com.javon.healthdash.calc.TodayItem) -> Unit)? = null,
+    onClick: (() -> Unit)? = null,
+) {
+    val c = Theme.colors
+    AppCard(onClick = onClick) {
+        Row(Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.SpaceBetween, verticalAlignment = Alignment.CenterVertically) {
+            Column(Modifier.weight(1f)) {
+                Text(if (compact) "Training today" else "Today's training", style = Theme.type.labelM, color = c.textSecondary)
+                Text(s.headline, style = Theme.type.headingH2, color = c.textPrimary)
+            }
+            if (!s.rest) Column(horizontalAlignment = Alignment.End) {
+                Text("≈ ${com.javon.healthdash.calc.TodaySummary.duration(if (s.allDone) s.totalMin else s.openMin)}", style = Theme.type.labelL, color = c.textPrimary)
+                Text(if (s.allDone) "total" else "left today", style = Theme.type.caption, color = c.textTertiary)
+            }
+        }
+        if (s.rest) Text("Nothing planned — recover well.", style = Theme.type.bodyM, color = c.textSecondary)
+        s.items.forEach { item ->
+            Row(
+                Modifier.fillMaxWidth().clip(Shapes.md).background(if (item.done) c.bgSurfaceSunken else c.bgAccentSubtle).clickable { onItem(item) }
+                    .padding(horizontal = Dimens.spacingMd, vertical = Dimens.spacingMd),
+                horizontalArrangement = Arrangement.spacedBy(Dimens.spacingMd), verticalAlignment = Alignment.CenterVertically,
+            ) {
+                Box(
+                    if (item.done) Modifier.size(26.dp).clip(CircleShape).background(c.bgAccent) else Modifier.size(26.dp).border(2.dp, c.borderAccent, CircleShape),
+                    contentAlignment = Alignment.Center,
+                ) { if (item.done) Icon(AppIcons.check, "Done", tint = c.textOnAccent, modifier = Modifier.size(16.dp)) }
+                Icon(
+                    when (item.sport) { com.javon.healthdash.calc.Sport.Strength -> AppIcons.strength; com.javon.healthdash.calc.Sport.Ride -> AppIcons.bike; else -> AppIcons.run },
+                    null, tint = if (item.done) c.iconSecondary else c.iconPrimary, modifier = Modifier.size(20.dp),
+                )
+                Column(Modifier.weight(1f)) {
+                    Text(item.short, style = Theme.type.labelL, color = if (item.done) c.textSecondary else c.textPrimary)
+                    Text(if (item.done) "Done" else "≈ ${com.javon.healthdash.calc.TodaySummary.duration(item.minutes)}", style = Theme.type.caption, color = c.textTertiary)
+                }
+                if (!item.done && onMove != null && !compact) Text("Move", style = Theme.type.labelM, color = c.textAccent, modifier = Modifier.clickable { onMove(item) }.padding(Dimens.spacingXs))
+            }
+        }
+        if (!compact) s.lateWarning(hour)?.let { Notice(NoticeType.Gentle, "Still to do today", it) }
     }
 }

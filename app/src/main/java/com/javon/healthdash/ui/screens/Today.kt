@@ -51,6 +51,7 @@ fun TodayScreen(
     onLogMeal: () -> Unit,
     onMeal: (Long) -> Unit,
     onSources: () -> Unit,
+    container: com.javon.healthdash.AppContainer? = null,
 ) {
     val now = state.nowMs
     ScreenFrame(
@@ -63,6 +64,19 @@ fun TodayScreen(
         bottomBar = { BottomNav(Tab.Today) { onTab(it) } },
     ) {
         HeroGlucose(state)
+
+        // Today's training at a glance (opens the Training tab).
+        if (container != null) {
+            val data = rememberTrainingData(container)
+            if (data.plans.isNotEmpty()) {
+                val zone = java.time.ZoneId.systemDefault()
+                val summary = com.javon.healthdash.data.todaySummary(data.planned, state.workouts, com.javon.healthdash.calc.localDateOf(now, zone), zone)
+                com.javon.healthdash.ui.components.TodayTrainingCard(
+                    summary, java.time.Instant.ofEpochMilli(now).atZone(zone).hour, compact = true,
+                    onItem = { onTab(Tab.Training) }, onClick = { onTab(Tab.Training) },
+                )
+            }
+        }
 
         val today = state.today
         val todaySummary = today.valueOrNull()

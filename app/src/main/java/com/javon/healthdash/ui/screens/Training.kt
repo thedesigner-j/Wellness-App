@@ -56,6 +56,7 @@ import com.javon.healthdash.calc.Phase
 import com.javon.healthdash.calc.PlanProgress
 import com.javon.healthdash.calc.ProgressSession
 import com.javon.healthdash.ui.components.PlanHeroCard
+import com.javon.healthdash.ui.components.TodayTrainingCard
 import com.javon.healthdash.ui.components.GoalOutlookCard
 import com.javon.healthdash.ui.components.ProgressLine
 import com.javon.healthdash.ui.components.WeekStrip
@@ -251,6 +252,7 @@ fun TrainingScreen(
     var dayOpen by remember { mutableStateOf<LocalDate?>(null) }
     var vo2Open by remember { mutableStateOf(false) }
     var travelOpen by remember { mutableStateOf(false) }
+    var movingId by remember { mutableStateOf<Long?>(null) }
     val scope = rememberCoroutineScope()
     val zones = zonesFor(state, zone)
     val done = state.workouts.map { it.done() }
@@ -286,6 +288,18 @@ fun TrainingScreen(
 
     ScreenFrame(topBar = { LargeTopBar("Training", overline) }, bottomBar = { BottomNav(Tab.Training) { onTab(it) } }) {
         HealthPermissionNotice(container)
+        // Today's sessions first, as a checklist — so a second session (e.g. strength) is never missed.
+        if (data.plans.isNotEmpty()) {
+            val openStrength = LocalOpenStrength.current
+            val summary = com.javon.healthdash.data.todaySummary(data.planned, state.workouts, today, zone)
+            val hour = java.time.Instant.ofEpochMilli(state.nowMs).atZone(zone).hour
+            TodayTrainingCard(
+                summary, hour,
+                onItem = { item -> if (item.sport == Sport.Strength) openStrength(item.id) else dayOpen = today },
+                onMove = { item -> movingId = item.id },
+            )
+            data.planned.firstOrNull { it.id == movingId }?.let { e -> MoveSheet(container, state, e, zone, onDismiss = { movingId = null }) }
+        }
         val unit = if (progress?.sport == Sport.Ride) "ride" else "run"
         if (progress != null && nextPlan != null) {
             if (LocalDate.ofEpochDay(nextPlan.startDate).isAfter(today)) Notice(NoticeType.Info, "Plan starts ${Fmt.dayShort(LocalDate.ofEpochDay(nextPlan.startDate).atStartOfDay(zone).toInstant().toEpochMilli())}", "Your ${nextPlan.label()} plan hasn't started yet.")

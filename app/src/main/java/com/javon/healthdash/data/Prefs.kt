@@ -27,6 +27,8 @@ class Prefs(context: Context) {
         val aiRewording: Boolean,
         val foodRecognition: Boolean,
         val walkNudge: Boolean,
+        val trainingMorning: Boolean,
+        val trainingCheckIn: Boolean,
         val glucoseSource: String?,
         val claudeModel: String,
     )
@@ -41,6 +43,8 @@ class Prefs(context: Context) {
         aiRewording = sp.getBoolean("aiRewording", false),
         foodRecognition = sp.getBoolean("foodRecognition", true),
         walkNudge = sp.getBoolean("walkNudge", true),
+        trainingMorning = sp.getBoolean("trainingMorning", true),
+        trainingCheckIn = sp.getBoolean("trainingCheckIn", true),
         glucoseSource = sp.getString("glucoseSource", null),
         claudeModel = sp.getString("claudeModel", null) ?: BuildConfig.DEFAULT_CLAUDE_MODEL,
     )
@@ -56,6 +60,8 @@ class Prefs(context: Context) {
     fun setAiRewording(v: Boolean) = update { putBoolean("aiRewording", v) }
     fun setFoodRecognition(v: Boolean) = update { putBoolean("foodRecognition", v) }
     fun setWalkNudge(v: Boolean) = update { putBoolean("walkNudge", v) }
+    fun setTrainingMorning(v: Boolean) = update { putBoolean("trainingMorning", v) }
+    fun setTrainingCheckIn(v: Boolean) = update { putBoolean("trainingCheckIn", v) }
     fun setGlucoseSource(v: String?) = update { putString("glucoseSource", v) }
     fun setClaudeModel(v: String) = update { putString("claudeModel", v.trim()) }
 

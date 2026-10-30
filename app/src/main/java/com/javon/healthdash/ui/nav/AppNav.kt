@@ -131,7 +131,7 @@ fun AppNav(container: AppContainer) {
             }
         }
         composable(Routes.TODAY) {
-            TodayScreen(state, onTab, onSync = dash::sync, onLogMeal = startLog, onMeal = { nav.navigate(Routes.meal(it)) }, onSources = { nav.navigate(Routes.SOURCES) })
+            TodayScreen(state, onTab, onSync = dash::sync, onLogMeal = startLog, onMeal = { nav.navigate(Routes.meal(it)) }, onSources = { nav.navigate(Routes.SOURCES) }, container = container)
         }
         composable(Routes.A1C) { A1cScreen(container, state, onTab, onFastingDetail = { nav.navigate(Routes.metric(TrendMetric.Fasting, 90)) }) }
         composable(Routes.TRENDS) {

@@ -108,6 +108,10 @@ fun SettingsScreen(container: AppContainer, onTab: (Tab) -> Unit, onBack: () -> 
         RowGroup {
             ListRow("Post-meal walk nudge", subtitle = "10 min after logging a meal", icon = AppIcons.bell, chevron = false,
                 trailingContent = { Toggle(prefs.walkNudge, { container.prefs.setWalkNudge(it) }) })
+            ListRow("Morning training rundown", subtitle = "7 AM · everything planned for today", icon = AppIcons.bell, chevron = false,
+                trailingContent = { Toggle(prefs.trainingMorning, { container.prefs.setTrainingMorning(it) }) })
+            ListRow("Afternoon check-in", subtitle = "4 PM · only if a session is still open", icon = AppIcons.bell, chevron = false,
+                trailingContent = { Toggle(prefs.trainingCheckIn, { container.prefs.setTrainingCheckIn(it) }) })
             ListRow("Sample data", subtitle = "Generated data for exploring the screens", icon = AppIcons.document, chevron = false,
                 trailingContent = {
                     Toggle(prefs.sampleData, { on ->

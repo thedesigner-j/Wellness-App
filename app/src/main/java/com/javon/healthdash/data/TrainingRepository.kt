@@ -53,6 +53,19 @@ fun PlanEntity.label(): String = RaceType.valueOf(raceType).let { t ->
 
 fun WorkoutEntity.done() = DoneWorkout(TimeWindow(startMs, endMs), sportOf(exerciseType))
 
+/** Today's planned sessions (any plan, not skipped) and whether each is done — marked by hand or matched to a watch workout. */
+fun todaySummary(planned: List<PlannedEntity>, workouts: List<WorkoutEntity>, today: LocalDate, zone: ZoneId): com.javon.healthdash.calc.TodaySummary {
+    val done = workouts.map { it.done() }
+    return com.javon.healthdash.calc.TodaySummary.of(
+        planned.filter { it.date == today.toEpochDay() && it.status != "Dropped" }.map { e ->
+            com.javon.healthdash.calc.TodayItem(
+                e.id, Sport.valueOf(e.sport), WorkoutKind.valueOf(e.kind), e.durationMin, e.distanceMi, e.name,
+                done = e.status == "Done" || Completion.matches(e.toSession(), done, zone) != null,
+            )
+        },
+    )
+}
+
 /** Race plans, planned sessions, rule-based adjustments and the fuel log (SPEC §8). */
 class TrainingRepository(private val dao: AppDao) {
     val plans = dao.plans()
