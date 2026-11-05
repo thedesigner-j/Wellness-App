@@ -104,6 +104,9 @@ fun forecastFor(s: DashboardState, plan: PlanEntity, planned: List<PlannedEntity
     val fourWeeks = s.nowMs - 28L * 24 * 3_600_000L
     val manualLongest = planned.filter { it.status == "Done" && it.sport == Sport.Run.name && LocalDate.ofEpochDay(it.date) >= localDateOf(fourWeeks, zone) }.maxOfOrNull { it.doneMi ?: it.distanceMi ?: 0.0 } ?: 0.0
     val longest = maxOf(efforts.filter { it.startMs >= fourWeeks }.maxOfOrNull { it.distanceMi } ?: 0.0, manualLongest)
+    // Average weekly running miles over the last 4 weeks (watch, corrected and hand-logged runs).
+    val manualMiles = planned.filter { it.status == "Done" && it.sport == Sport.Run.name && LocalDate.ofEpochDay(it.date) >= localDateOf(fourWeeks, zone) }.sumOf { it.doneMi ?: it.distanceMi ?: 0.0 }
+    val weeklyMiles = (efforts.filter { it.startMs >= fourWeeks }.sumOf { it.distanceMi } + manualMiles) / 4.0
     val mine = planned.filter { it.planId == plan.id }
     val adherence = RacePrediction.adherence(mine.filter { it.status != "Dropped" }.map { e ->
         AdherenceItem(LocalDate.ofEpochDay(e.date), WorkoutKind.valueOf(e.kind) == WorkoutKind.Long, e.status == "Done" || matchedWorkout(e, s, zone) != null)
@@ -113,7 +116,7 @@ fun forecastFor(s: DashboardState, plan: PlanEntity, planned: List<PlannedEntity
     val raceMi = plan.inputs().raceMi
     val f = RacePrediction.forecast(
         efforts, s.nowMs, today, race, raceMi, plan.goalMin?.times(60), longest, adherence, heart.lthr?.bpm, heart.maxHr?.bpm,
-        firstMarathon, taper, PredictionConfig(),
+        firstMarathon, taper, PredictionConfig(), weeklyMiles = weeklyMiles,
     )
     val vo2 = s.vo2.filter { s.nowMs - it.timeMs < 90L * 24 * 3_600_000L }.maxByOrNull { it.timeMs }?.value
     val potential = vo2?.takeIf { it in 25.0..90.0 }?.let { GoalLikelihood.vdotTimeSec(it, raceMi) }

@@ -315,7 +315,8 @@ fun RaceForecastCard(b: com.javon.healthdash.ui.screens.ForecastBundle, hasGoal:
                 buildString {
                     append("Fitness today: ${effortName(e.distanceMi)} on ${date.month.getDisplayName(TextStyle.SHORT, Locale.US)} ${date.dayOfMonth} (${com.javon.healthdash.calc.PaceMath.fmtTime(e.elapsedSec)}")
                     if (conditions.isNotEmpty()) append(", adjusted for ${conditions.joinToString(" and ")}")
-                    append(") → ${m(f.fitnessSec)}. ")
+                    if (f.mileagePct > 0) append(") → ${m(f.rawFitnessSec)}, +${"%.1f".format(f.mileagePct * 100)}% for ${"%.0f".format(f.weeklyMiles ?: 0.0)} mi/week (low mileage) → ${m(f.fitnessSec)}. ")
+                    else append(") → ${m(f.fitnessSec)}. ")
                     append("Expected improvement by race day: ${"%.1f".format(f.gain * 100)}% (${"%.1f".format(f.buildWeeksLeft)} build weeks × ${(f.adherence * 100).roundToInt()}% adherence)")
                     if (f.penaltyPct > 0) append(", plus ${"%.1f".format(f.penaltyPct)}% for a first marathon")
                     append(". Likely range: ${m(f.lowSec)}–${m(f.highSec)}")
@@ -324,6 +325,7 @@ fun RaceForecastCard(b: com.javon.healthdash.ui.screens.ForecastBundle, hasGoal:
                 },
                 style = Theme.type.bodyS, color = c.textSecondary,
             )
+            if (f.mileagePct > 0) Caption("The low-mileage adjustment shrinks as your weekly miles build and is gone at 40 mi/week.")
             Caption("Improvement is the training still to come. The range is uncertainty — prediction error, race-day variation, and ${"%.0f".format(f.weeksToRace)} weeks still to go.")
         }
         b.watchPotentialSec?.let { Text("Potential (watch estimate): ${m(it)} — from Garmin's VO2 max; not used in the forecast.", style = Theme.type.caption, color = c.textTertiary) }

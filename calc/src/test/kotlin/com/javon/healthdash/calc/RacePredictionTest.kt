@@ -93,6 +93,30 @@ class RacePredictionTest {
         assertThat(pen.probability!!).isAtLeast(0.40)
     }
 
+    @Test fun lowMileageMakesFitnessTodayMoreConservative() {
+        // 15 mi/week: shortfall (40 − 15) / 40 = 62.5% of the 5% max → +3.125% → 4:33 becomes ~4:42.
+        assertThat(RacePrediction.mileageAdjustment(15.0, MARATHON_MI)).isWithin(1e-9).of(0.03125)
+        assertThat(RacePrediction.mileageAdjustment(40.0, MARATHON_MI)).isEqualTo(0.0)
+        assertThat(RacePrediction.mileageAdjustment(55.0, MARATHON_MI)).isEqualTo(0.0)
+        assertThat(RacePrediction.mileageAdjustment(0.0, MARATHON_MI)).isWithin(1e-9).of(0.05)
+        // Half the effect for a half marathon, none for a 10K, none without data.
+        assertThat(RacePrediction.mileageAdjustment(15.0, HALF_MI)).isWithin(1e-4).of(0.03125 / 2)
+        assertThat(RacePrediction.mileageAdjustment(15.0, TEN_K_MI)).isEqualTo(0.0)
+        assertThat(RacePrediction.mileageAdjustment(null, MARATHON_MI)).isEqualTo(0.0)
+
+        fun at(miles: Double?) = RacePrediction.forecast(
+            listOf(hard10k), nowMs, today, today.plusWeeks(9), MARATHON_MI, 270 * 60, 10.6, 0.7, null, 189,
+            firstMarathon = false, taperWeeks = 2, weeklyMiles = miles,
+        )!!
+        val low = at(15.0)
+        assertThat(low.rawFitnessSec / 3600.0).isIn(com.google.common.collect.Range.closed(4.5, 4.5 + 5 / 60.0))  // 4:33
+        assertThat(low.fitnessSec / 3600.0).isIn(com.google.common.collect.Range.closed(4 + 40 / 60.0, 4 + 45 / 60.0))  // 4:40–4:45
+        // Eases off as mileage builds: at 40 mi/week fitness today is the raw 4:33 again.
+        assertThat(at(40.0).fitnessSec).isEqualTo(at(40.0).rawFitnessSec)
+        assertThat(at(25.0).fitnessSec).isLessThan(low.fitnessSec)
+        assertThat(at(25.0).probability!!).isGreaterThan(low.probability!!)
+    }
+
     @Test fun probabilityDisplayIsClamped() {
         val far = spec(false).copy(probability = 0.999)
         assertThat(far.displayPercent).isEqualTo(95)

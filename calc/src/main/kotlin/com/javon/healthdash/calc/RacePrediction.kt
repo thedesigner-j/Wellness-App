@@ -42,6 +42,14 @@ data class PredictionConfig(
     val firstMarathonPenalty: Boolean = true,
     val firstMarathonPct: Double = 1.5,
     val defaultTaperWeeks: Int = 2,
+    /**
+     * Low-mileage adjustment: scaling a short effort up assumes enough volume to hold pace (≈ [mileageRefMi]
+     * mi/week). Below that, fitness today is slowed by up to [mileageMaxPenalty] in proportion to the shortfall
+     * (research on recreational marathoners finds Riegel-style scaling too fast at low weekly mileage).
+     * Full effect for a marathon, scaled by distance for shorter races, none at 10 mi or less. Estimates — to tune.
+     */
+    val mileageRefMi: Double = 40.0,
+    val mileageMaxPenalty: Double = 0.05,
 ) {
     companion object { const val GAIN_PER_BUILD_WEEK = 0.004 }
 }
@@ -56,6 +64,10 @@ data class RaceForecast(
     val heatPct: Double,
     val hillSec: Int,
     val k: Double,
+    /** Before the mileage adjustment. */
+    val rawFitnessSec: Int,
+    val weeklyMiles: Double?,
+    val mileagePct: Double,
     val fitnessSec: Int,
     val buildWeeksLeft: Double,
     val adherence: Double,
@@ -127,6 +139,13 @@ object RacePrediction {
     fun gain(buildWeeks: Double, adherence: Double, c: PredictionConfig = PredictionConfig()) =
         min(c.gainPerBuildWeek * buildWeeks * adherence.coerceIn(0.0, 1.0), c.maxGain)
 
+    /** Fraction added to fitness today for low weekly mileage (see [PredictionConfig.mileageRefMi]). */
+    fun mileageAdjustment(weeklyMiles: Double?, raceMi: Double, c: PredictionConfig = PredictionConfig()): Double {
+        if (weeklyMiles == null || raceMi <= 10.0) return 0.0
+        val shortfall = ((c.mileageRefMi - weeklyMiles) / c.mileageRefMi).coerceIn(0.0, 1.0)
+        return c.mileageMaxPenalty * shortfall * min(1.0, raceMi / MARATHON_MI)
+    }
+
     fun sdPct(weeksToRace: Double, c: PredictionConfig = PredictionConfig()) =
         sqrt(c.predictionErrorPct * c.predictionErrorPct + c.raceDayPct * c.raceDayPct + (c.perWeekOutPct * weeksToRace).let { it * it })
 
@@ -134,9 +153,13 @@ object RacePrediction {
         runs: List<EffortRun>, nowMs: Long, today: LocalDate, raceDate: LocalDate, raceMi: Double, goalSec: Int?,
         longestRecentMi: Double, adherence: Double, lthr: Int?, maxHr: Int?, firstMarathon: Boolean,
         taperWeeks: Int? = null, c: PredictionConfig = PredictionConfig(),
+        /** Average weekly running miles over the last 4 weeks; null = no mileage adjustment. */
+        weeklyMiles: Double? = null,
     ): RaceForecast? {
         val k = riegelK(longestRecentMi)
-        val (effort, fitness) = bestEffort(runs, nowMs, raceMi, k, lthr, maxHr) ?: return null
+        val (effort, raw) = bestEffort(runs, nowMs, raceMi, k, lthr, maxHr) ?: return null
+        val mileagePct = mileageAdjustment(weeklyMiles, raceMi, c)
+        val fitness = (raw * (1 + mileagePct)).roundToInt()
         val build = buildWeeksLeft(today, raceDate, taperWeeks ?: c.defaultTaperWeeks)
         val g = gain(build, adherence, c)
         val penalty = if (c.firstMarathonPenalty && firstMarathon && raceMi > 26.0) c.firstMarathonPct else 0.0
@@ -145,7 +168,7 @@ object RacePrediction {
         val sdPct = sdPct(weeksOut, c)
         val sd = projected * sdPct / 100
         return RaceForecast(
-            effort, adjusted(effort), heatFraction(effort.tempF), hillSeconds(effort.ascentFt, effort.descentFt).roundToInt(), k, fitness,
+            effort, adjusted(effort), heatFraction(effort.tempF), hillSeconds(effort.ascentFt, effort.descentFt).roundToInt(), k, raw, weeklyMiles, mileagePct, fitness,
             build, adherence, g, penalty, projected, weeksOut, sdPct, sd.roundToInt(),
             (projected - Z80 * sd).roundToInt(), (projected + Z80 * sd).roundToInt(),
             goalSec?.let { GoalLikelihood.phi((it - projected) / sd) }, goalSec,
