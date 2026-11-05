@@ -3,6 +3,7 @@ package com.javon.healthdash.ui.screens
 import androidx.compose.foundation.clickable
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.FlowRow
+import com.javon.healthdash.ui.components.RaceForecastCard
 import com.javon.healthdash.ui.components.Toggle
 import com.javon.healthdash.calc.PlanResult
 import kotlin.math.roundToInt
@@ -138,7 +139,9 @@ fun sessionTitle(e: PlannedEntity): String {
 }
 
 /** HR zones from resting HR (14-day morning average) and the highest workout max HR in 90 days. */
+/** HR zones: from threshold HR (LTHR) when there is a qualifying hard effort, else heart-rate reserve. */
 fun zonesFor(s: DashboardState, zone: ZoneId): List<HrZone> {
+    heartProfile(s, emptyList(), zone).zones.takeIf { it.isNotEmpty() }?.let { return it }
     val today = localDateOf(s.nowMs, zone)
     val rhr = (0..13).mapNotNull { SleepContext.morningValue(today.minusDays(it.toLong()), zone, s.restingHr) }
     val max = s.workouts.mapNotNull { it.maxHr }.maxOrNull()
@@ -262,6 +265,8 @@ fun TrainingScreen(
     onWeek: (LocalDate) -> Unit,
     onAdjustments: () -> Unit,
     onRaceDay: (Long) -> Unit = {},
+    onZones: () -> Unit = {},
+    onWatch: () -> Unit = {},
 ) {
     val zone = ZoneId.systemDefault()
     val data = rememberTrainingData(container)
@@ -327,7 +332,16 @@ fun TrainingScreen(
             if (LocalDate.ofEpochDay(nextPlan.startDate).isAfter(today)) Notice(NoticeType.Info, "Plan starts ${Fmt.dayShort(LocalDate.ofEpochDay(nextPlan.startDate).atStartOfDay(zone).toInstant().toEpochMilli())}", "Your ${nextPlan.label()} plan hasn't started yet.")
             PlanHeroCard(progress, nextPlan.label(), Fmt.dayShort(LocalDate.ofEpochDay(nextPlan.raceDate).atStartOfDay(zone).toInstant().toEpochMilli())) { onPlans() }
             val raceType = com.javon.healthdash.calc.RaceType.valueOf(nextPlan.raceType)
-            if (!raceType.relay) {
+            if (!raceType.relay && raceType.sport == Sport.Run) {
+                // Race forecast from a qualifying hard effort (RacePrediction), heart-rate profile and test prompts.
+                val weather = rememberWeather(container)
+                val prefsState by container.prefs.state.collectAsStateWithLifecycle()
+                val bundle = remember(state.workouts, data.planned, weather, nextPlan, prefsState.firstMarathon) {
+                    forecastFor(state, nextPlan, data.planned, zone, weather, prefsState.firstMarathon)
+                }
+                RaceForecastCard(bundle, nextPlan.goalMin != null, onZones = onZones)
+                bundle.prompts.forEach { p -> Notice(NoticeType.Prompt, p.title, p.body + (p.replaceSessionDate?.let { " (${Fmt.dayShort(it.atStartOfDay(zone).toInstant().toEpochMilli())})" } ?: "")) }
+            } else if (!raceType.relay) {
                 val raceMi = nextPlan.inputs().raceMi
                 val samples = state.workouts.filter { sportOf(it.exerciseType) == progress.sport && (it.distanceM ?: 0.0) > 0 }.map {
                     com.javon.healthdash.calc.EffortSample(it.distanceM!! / com.javon.healthdash.calc.METERS_PER_MI, ((it.endMs - it.startMs) / 1000).toInt(), ((state.nowMs - it.startMs) / (24 * 3_600_000L)).toInt())
@@ -432,6 +446,8 @@ fun TrainingScreen(
             ListRow("Race plans", subtitle = if (data.plans.isEmpty()) "Create your first plan" else "${data.plans.size} plan${if (data.plans.size == 1) "" else "s"} in sequence", icon = AppIcons.calendar, onClick = onPlans)
             if (nextPlan != null) {
                 ListRow("Race-day plan", subtitle = "Splits, fueling and carb loading", icon = AppIcons.run, onClick = { onRaceDay(nextPlan.id) })
+                ListRow("Watch workouts", subtitle = "Next 7 days with pace targets · .FIT files", icon = AppIcons.run, onClick = onWatch)
+                ListRow("Heart rate & zones", subtitle = "Max HR, threshold, zones and tests", icon = AppIcons.trends, onClick = onZones)
                 ListRow("Travel or time off", subtitle = "Skip days and rebuild the plan around them", icon = AppIcons.calendar, onClick = { travelOpen = true })
                 ListRow("Rebuild plan", subtitle = "From tomorrow, with the latest rules and your current fitness", icon = AppIcons.sync, onClick = { rebuildOpen = true })
             }
@@ -618,7 +634,7 @@ fun reviewFor(e: PlannedEntity, s: DashboardState, zone: ZoneId, zones: List<HrZ
     return com.javon.healthdash.calc.Feedback.review(
         kind, if (doneSport == Sport.Ride && sport == Sport.Run) Sport.Ride else sport, e.durationMin,
         if (doneSport == Sport.Ride && sport == Sport.Run) null else e.distanceMi,
-        e.doneMin ?: ((w.endMs - w.startMs) / MINUTE_MS).toInt(), e.doneMi ?: w.distanceM?.div(com.javon.healthdash.calc.METERS_PER_MI), w.avgHr, zones,
+        e.doneMin ?: ((w.endMs - w.startMs) / MINUTE_MS).toInt(), e.doneMi ?: w.distanceM?.div(com.javon.healthdash.calc.METERS_PER_MI), w.avgHr, zones, heartProfile(s, emptyList(), zone).easyCeiling,
     )
 }
 

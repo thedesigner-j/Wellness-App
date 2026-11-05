@@ -24,6 +24,10 @@ data class ApiActivity(
     val distanceM: Double?,
     val avgHr: Double?,
     val maxHr: Double?,
+    /** Elapsed (clock) time, seconds; [durationSec] is timer time. */
+    val elapsedSec: Int? = null,
+    val ascentM: Double? = null,
+    val descentM: Double? = null,
 ) {
     /** Treadmill, trainer and virtual sessions (no GPS). */
     val indoor: Boolean get() = GarminApi.isIndoor(typeKey)
@@ -87,6 +91,9 @@ object GarminApi {
             distanceM = o.double("distance")?.takeIf { it > 0 },
             avgHr = (o.double("averageHR") ?: o.double("averageHeartRate"))?.takeIf { it > 0 },
             maxHr = (o.double("maxHR") ?: o.double("maxHeartRate"))?.takeIf { it > 0 },
+            elapsedSec = o.double("elapsedDuration")?.takeIf { it > 0 }?.toInt(),
+            ascentM = (o.double("elevationGain") ?: o.double("totalAscent"))?.takeIf { it >= 0 },
+            descentM = (o.double("elevationLoss") ?: o.double("totalDescent"))?.takeIf { it >= 0 },
         )
     }
 

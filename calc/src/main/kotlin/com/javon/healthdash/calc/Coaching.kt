@@ -71,7 +71,15 @@ object Feedback {
         }
     }
 
-    fun review(kind: WorkoutKind, sport: Sport, plannedMin: Int, plannedMi: Double?, doneMin: Int, doneMi: Double?, avgHr: Double?, zones: List<HrZone>): SessionReview {
+    /** Easy days are judged by heart rate (ceiling = top of Z2 from LTHR), not pace. */
+    val HR_JUDGED = setOf(WorkoutKind.Easy, WorkoutKind.Recovery, WorkoutKind.ClubEasy, WorkoutKind.DoubleDay, WorkoutKind.Long)
+    /** "Well below" the ceiling. */
+    const val LOW_HR_MARGIN = 10
+    /** Slower than planned by more than this (s/mi) with low HR → you can run closer to planned pace. */
+    const val SLOW_SEC = 60
+
+    fun review(kind: WorkoutKind, sport: Sport, plannedMin: Int, plannedMi: Double?, doneMin: Int, doneMi: Double?, avgHr: Double?, zones: List<HrZone>, easyCeiling: Int? = null): SessionReview {
+        if (easyCeiling != null && avgHr != null && kind in HR_JUDGED && sport == Sport.Run) return easyReview(kind, plannedMin, plannedMi, doneMin, doneMi, avgHr, easyCeiling, zones)
         val completion = when {
             plannedMi != null && plannedMi > 0 && doneMi != null -> doneMi / plannedMi
             plannedMin > 0 -> doneMin.toDouble() / plannedMin
@@ -85,7 +93,7 @@ object Feedback {
         if (completion != null && completion > 1.2 && kind != WorkoutKind.Race) notes += "Went ${(completion * 100 - 100).roundToInt()}% longer than planned — extra volume adds fatigue; stick to the plan."
         when (pace) {
             PaceCheck.TooFast -> notes += if (kind in QUALITY) "Faster than target — great if it felt controlled, but it can cost you the next session." else "Too quick for an ${if (kind == WorkoutKind.Long) "long" else "easy"} day. Slow down: easy miles build endurance without the fatigue."
-            PaceCheck.TooSlow -> notes += if (kind in QUALITY) "Slower than target. Heat, hills, sleep or fatigue? If it happens twice, ease off." else "Slower than planned — fine for an easy day."
+            PaceCheck.TooSlow -> notes += if (kind in QUALITY) "Slower than target. Heat, hills, sleep or fatigue? If it happens twice, ease off." else "Slower than planned."
             else -> {}
         }
         if (hrHigh) notes += "Average heart rate was Z$zone — high for this session (aim for Z${maxZone(kind)} or below)."
@@ -98,6 +106,29 @@ object Feedback {
             else -> "Done"
         }
         return SessionReview(completion, pp, ap, pace, zone, hrHigh, headline, notes)
+    }
+
+    private fun easyReview(kind: WorkoutKind, plannedMin: Int, plannedMi: Double?, doneMin: Int, doneMi: Double?, avgHr: Double, ceiling: Int, zones: List<HrZone>): SessionReview {
+        val completion = when {
+            plannedMi != null && plannedMi > 0 && doneMi != null -> doneMi / plannedMi
+            plannedMin > 0 -> doneMin.toDouble() / plannedMin
+            else -> null
+        }
+        val (pp, ap, _) = paceCheck(kind, Sport.Run, plannedMin, plannedMi, doneMin, doneMi)
+        val tooHard = avgHr > ceiling
+        val lowAndSlow = !tooHard && pp != null && ap != null && ap - pp > SLOW_SEC && avgHr <= ceiling - LOW_HR_MARGIN
+        val notes = mutableListOf<String>()
+        if (completion != null && completion < 0.85) notes += "Cut short at ${(completion * 100).roundToInt()}% of the plan — fine once; if it keeps happening the plan may be too much."
+        if (tooHard) notes += "Average HR ${avgHr.roundToInt()} was above your easy ceiling of $ceiling. Slow down until HR stays under $ceiling — easy days build endurance without the fatigue."
+        if (lowAndSlow) notes += "Your HR was low (${avgHr.roundToInt()} vs ceiling $ceiling) — you can run closer to planned pace."
+        val headline = when {
+            completion != null && completion < 0.85 -> "Partly done"
+            tooHard -> "Too hard for an easy day"
+            lowAndSlow -> "Easy — you can go a bit quicker"
+            else -> "Nailed it — HR stayed easy"
+        }
+        val check = when { tooHard -> PaceCheck.TooFast; lowAndSlow -> PaceCheck.TooSlow; pp == null -> PaceCheck.NoData; else -> PaceCheck.OnTarget }
+        return SessionReview(completion, pp, ap, check, zoneOf(avgHr, zones), tooHard, headline, notes)
     }
 }
 

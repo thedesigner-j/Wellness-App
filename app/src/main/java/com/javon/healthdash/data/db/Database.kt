@@ -34,6 +34,14 @@ data class WorkoutEntity(
     val avgHr: Double? = null,
     val maxHr: Double? = null,
     val distanceM: Double? = null,
+    /** Elapsed (not moving) time, seconds — race prediction uses this. */
+    val elapsedSec: Int? = null,
+    val ascentM: Double? = null,
+    val descentM: Double? = null,
+    /** From HR samples: highest value held ≥ 10 s (after 3 min, spikes removed), last-20-min and after-10-min averages. */
+    val hrMaxSustained: Int? = null,
+    val hrAvgLast20: Double? = null,
+    val hrAvgAfter10: Double? = null,
 )
 
 /** A race plan (SPEC §8). Plans chain in sequence by race date. */
@@ -82,6 +90,8 @@ data class PlannedEntity(
     val doneMi: Double? = null,
     /** How the session felt, 1–10 (RPE), entered after the workout. */
     val rpe: Int? = null,
+    /** Garmin Connect workout id once uploaded (unused until workout upload is available). */
+    val garminWorkoutId: String? = null,
 )
 
 /** Log of rule-based plan changes, with what is needed to undo a swap. */
@@ -233,6 +243,10 @@ interface AppDao {
     @Query("SELECT * FROM sync_state")
     fun syncStates(): Flow<List<SyncStateEntity>>
 
+    @androidx.room.Upsert suspend fun upsertWeather(rows: List<WeatherEntity>)
+    @Query("SELECT * FROM weather WHERE hourMs >= :from ORDER BY hourMs") fun weather(from: Long): Flow<List<WeatherEntity>>
+    @Query("SELECT * FROM weather WHERE hourMs >= :from ORDER BY hourMs") suspend fun weatherNow(from: Long): List<WeatherEntity>
+
     @Query("SELECT * FROM targets")
     fun targets(): Flow<List<TargetEntity>>
 
@@ -310,13 +324,13 @@ interface AppDao {
     entities = [
         GlucoseEntity::class, StepsEntity::class, WorkoutEntity::class, BodyEntity::class,
         MealEntity::class, MealItemEntity::class, AiResultEntity::class, TargetEntity::class, SyncStateEntity::class,
-        SleepEntity::class, ReadingEntity::class, LabEntity::class,
+        SleepEntity::class, ReadingEntity::class, LabEntity::class, WeatherEntity::class,
         PlanEntity::class, PlannedEntity::class, AdjustmentEntity::class, FuelEntity::class,
     ],
-    version = 8,
+    version = 9,
     exportSchema = true,
     // Each version only adds tables or nullable columns, so Room migrates automatically and keeps data.
-    autoMigrations = [androidx.room.AutoMigration(from = 1, to = 2), androidx.room.AutoMigration(from = 2, to = 3), androidx.room.AutoMigration(from = 3, to = 4), androidx.room.AutoMigration(from = 4, to = 5), androidx.room.AutoMigration(from = 5, to = 6), androidx.room.AutoMigration(from = 6, to = 7), androidx.room.AutoMigration(from = 7, to = 8)],
+    autoMigrations = [androidx.room.AutoMigration(from = 1, to = 2), androidx.room.AutoMigration(from = 2, to = 3), androidx.room.AutoMigration(from = 3, to = 4), androidx.room.AutoMigration(from = 4, to = 5), androidx.room.AutoMigration(from = 5, to = 6), androidx.room.AutoMigration(from = 6, to = 7), androidx.room.AutoMigration(from = 7, to = 8), androidx.room.AutoMigration(from = 8, to = 9)],
 )
 abstract class AppDatabase : RoomDatabase() {
     abstract fun dao(): AppDao
@@ -326,3 +340,7 @@ abstract class AppDatabase : RoomDatabase() {
             Room.databaseBuilder(context, AppDatabase::class.java, "health.db").build()
     }
 }
+
+/** Hourly air temperature (Open-Meteo, Las Vegas) for heat adjustment of runs and pace targets. */
+@Entity(tableName = "weather")
+data class WeatherEntity(@PrimaryKey val hourMs: Long, val tempF: Double)

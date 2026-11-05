@@ -45,6 +45,7 @@ class AppContainer(context: Context) {
     val photos = Photos(context)
     val training = com.javon.healthdash.data.TrainingRepository(dao)
     val garmin = com.javon.healthdash.data.GarminApiSource(keys, dao)
+    val weather = com.javon.healthdash.data.WeatherSource(dao)
 
     /**
      * Full sync on first run (90 days of history), then the last 3 days to pick up late data.
@@ -53,9 +54,12 @@ class AppContainer(context: Context) {
     suspend fun syncNow() {
         val first = prefs.state.value.let { !it.onboardingDone } || dao.glucoseSources(0).none { it != SampleData.SOURCE }
         try {
-            health.sync(days = if (first) 90 else 3)
+            // Workouts stored before HR-sample figures existed → one 90-day pass to fill them in.
+            val backfill = dao.workoutsNow(System.currentTimeMillis() - 42L * 24 * 3_600_000L).any { it.source != com.javon.healthdash.calc.GarminApi.SOURCE && it.elapsedSec == null }
+            health.sync(days = if (first || backfill) 90 else 3)
         } finally {
             runCatching { garmin.sync() }
+            runCatching { weather.refresh() }
         }
     }
 

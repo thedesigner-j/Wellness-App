@@ -44,7 +44,9 @@ class GarminApiSource(private val keys: SecureKeys, private val dao: AppDao) {
         val now = System.currentTimeMillis()
         if (!force && prev != null && now - prev.lastSyncMs < MIN_INTERVAL_MS) return
         try {
-            val (from, to) = GarminApi.syncRange(LocalDate.now(zone), prev?.lastRecordMs, zone)
+            // Rows synced before elapsed time / climb were stored → refetch the full 90 days once.
+            val backfill = dao.workoutsNow(now - GarminApi.HISTORY_DAYS * 24 * HOUR_MS).any { it.source == GarminApi.SOURCE && it.elapsedSec == null }
+            val (from, to) = GarminApi.syncRange(LocalDate.now(zone), if (backfill) null else prev?.lastRecordMs, zone)
             val acts = fetchAll(key, from, to, zone)
             dao.upsertWorkouts(acts.map { it.toEntity() })
             val newest = listOfNotNull(prev?.lastRecordMs, acts.maxOfOrNull { it.startMs }).maxOrNull()
@@ -143,8 +145,17 @@ class GarminApiSource(private val keys: SecureKeys, private val dao: AppDao) {
         const val MIN_INTERVAL_MS = 30 * MINUTE_MS
 
         /** Drops Health Connect / CSV copies of activities the API also returned. */
-        fun dedup(rows: List<WorkoutEntity>): List<WorkoutEntity> =
-            WorkoutDedup.preferApi(rows, { it.source == GarminApi.SOURCE }, { it.startMs }, { sportOf(it.exerciseType) })
+        /** Hides Health Connect copies of API activities, keeping their HR-sample figures on the API row. */
+        fun dedup(rows: List<WorkoutEntity>): List<WorkoutEntity> {
+            val kept = WorkoutDedup.preferApi(rows, { it.source == GarminApi.SOURCE }, { it.startMs }, { sportOf(it.exerciseType) })
+            val hidden = rows.filter { r -> kept.none { it === r } }
+            if (hidden.isEmpty()) return kept
+            return kept.map { k ->
+                if (k.source != GarminApi.SOURCE || k.hrMaxSustained != null) k
+                else hidden.firstOrNull { h -> sportOf(h.exerciseType) == sportOf(k.exerciseType) && kotlin.math.abs(h.startMs - k.startMs) <= 120_000 }
+                    ?.let { h -> k.copy(hrMaxSustained = h.hrMaxSustained, hrAvgLast20 = h.hrAvgLast20, hrAvgAfter10 = h.hrAvgAfter10, avgHr = k.avgHr ?: h.avgHr) } ?: k
+            }
+        }
     }
 }
 
@@ -163,4 +174,7 @@ fun ApiActivity.toEntity() = WorkoutEntity(
     avgHr = avgHr,
     maxHr = maxHr,
     distanceM = distanceM,
+    elapsedSec = elapsedSec ?: durationSec,
+    ascentM = ascentM,
+    descentM = descentM,
 )

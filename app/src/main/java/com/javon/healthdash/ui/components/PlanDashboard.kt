@@ -32,6 +32,7 @@ import com.javon.healthdash.ui.theme.Shapes
 import com.javon.healthdash.ui.theme.Theme
 import java.time.format.TextStyle
 import java.util.Locale
+import kotlin.math.roundToInt
 
 @Composable
 private fun phaseColor(p: Phase): Color = Theme.colors.let { c ->
@@ -258,5 +259,73 @@ fun TodayTrainingCard(
             }
         }
         if (!compact) s.lateWarning(hour)?.let { Notice(NoticeType.Gentle, "Still to do today", it) }
+    }
+}
+
+/** "10K", "5K", "Half marathon" or "6.3 mi run" for an effort's distance. */
+private fun effortName(mi: Double) = when {
+    kotlin.math.abs(mi - 3.107) < 0.15 -> "5K"
+    kotlin.math.abs(mi - 6.214) < 0.2 -> "10K"
+    kotlin.math.abs(mi - 13.109) < 0.3 -> "Half marathon"
+    else -> "${"%.1f".format(mi)} mi run"
+}
+
+/**
+ * Race forecast: chance of the goal, projected time, likely range and how it was built. Improvement (training
+ * still to come) and uncertainty (the range) are kept separate. Projections are rounded to the minute.
+ */
+@Composable
+fun RaceForecastCard(b: com.javon.healthdash.ui.screens.ForecastBundle, hasGoal: Boolean, onZones: () -> Unit) {
+    val c = Theme.colors
+    fun m(sec: Int) = com.javon.healthdash.calc.RacePrediction.fmtMinute(sec)
+    val f = b.forecast
+    AppCard {
+        Row(Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.SpaceBetween, verticalAlignment = Alignment.CenterVertically) {
+            Text(if (hasGoal) "Chance of hitting your goal" else "Projected finish", style = Theme.type.labelL, color = c.textPrimary)
+            Tag("Estimate", TagType.Derived)
+        }
+        if (f == null) {
+            Text("Needs a hard effort", style = Theme.type.headingH2, color = c.textPrimary)
+            Text(
+                "The forecast is built from a genuine hard run of 3+ miles in the last 6 weeks (average HR ≥ 90% of threshold, or rated 8/10+). " +
+                    "Easy runs don't show what you can race. A tempo, a hard run club, or a 5K/10K effort will do.",
+                style = Theme.type.bodyS, color = c.textSecondary,
+            )
+        } else {
+            if (hasGoal && f.displayPercent != null) {
+                Row(verticalAlignment = Alignment.Bottom, horizontalArrangement = Arrangement.spacedBy(Dimens.spacingMd)) {
+                    Text("${f.displayPercent}%", style = Theme.type.displayM, color = c.textPrimary)
+                    val p = f.displayPercent!!
+                    Tag(
+                        when { p >= 70 -> "Likely"; p >= 45 -> "Toss-up"; p >= 25 -> "Stretch"; else -> "Unlikely" },
+                        when { p >= 70 -> TagType.InRange; p >= 45 -> TagType.Neutral; p >= 25 -> TagType.High; else -> TagType.VeryHigh },
+                        Modifier.padding(bottom = Dimens.spacingSm),
+                    )
+                }
+            }
+            MetricTiles(listOf("Projected" to m(f.projectedSec), "Likely range" to "${m(f.lowSec)}–${m(f.highSec)}", "Fitness today" to m(f.fitnessSec)))
+            val e = f.effort
+            val date = java.time.Instant.ofEpochMilli(e.startMs).atZone(java.time.ZoneId.systemDefault()).toLocalDate()
+            val conditions = listOfNotNull(
+                e.tempF?.takeIf { it > 60 }?.let { "${it.roundToInt()}°F" },
+                e.ascentFt?.takeIf { it >= 20 }?.let { "${it.roundToInt()} ft climb" },
+            )
+            Text(
+                buildString {
+                    append("Fitness today: ${effortName(e.distanceMi)} on ${date.month.getDisplayName(TextStyle.SHORT, Locale.US)} ${date.dayOfMonth} (${com.javon.healthdash.calc.PaceMath.fmtTime(e.elapsedSec)}")
+                    if (conditions.isNotEmpty()) append(", adjusted for ${conditions.joinToString(" and ")}")
+                    append(") → ${m(f.fitnessSec)}. ")
+                    append("Expected improvement by race day: ${"%.1f".format(f.gain * 100)}% (${"%.1f".format(f.buildWeeksLeft)} build weeks × ${(f.adherence * 100).roundToInt()}% adherence)")
+                    if (f.penaltyPct > 0) append(", plus ${"%.1f".format(f.penaltyPct)}% for a first marathon")
+                    append(". Likely range: ${m(f.lowSec)}–${m(f.highSec)}")
+                    if (hasGoal && f.displayPercent != null) append(". Chance of goal: ${f.displayPercent}%")
+                    append(".")
+                },
+                style = Theme.type.bodyS, color = c.textSecondary,
+            )
+            Caption("Improvement is the training still to come. The range is uncertainty — prediction error, race-day variation, and ${"%.0f".format(f.weeksToRace)} weeks still to go.")
+        }
+        b.watchPotentialSec?.let { Text("Potential (watch estimate): ${m(it)} — from Garmin's VO2 max; not used in the forecast.", style = Theme.type.caption, color = c.textTertiary) }
+        Text("Heart-rate zones · max ${b.heart.maxHr?.label ?: "unknown"} · threshold ${b.heart.lthr?.bpm ?: "—"}", style = Theme.type.labelM, color = c.textAccent, modifier = Modifier.clickable(onClick = onZones).padding(vertical = Dimens.spacingXs))
     }
 }

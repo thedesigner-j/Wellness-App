@@ -84,6 +84,8 @@ object Routes {
     const val EXPORT = "export"
     const val STRENGTH = "strength/{id}"
     const val RACE_DAY = "raceday/{planId}"
+    const val ZONES = "zones"
+    const val WATCH = "watch"
 
     fun workout(id: String) = "workout/${android.net.Uri.encode(id)}"
     fun week(monday: java.time.LocalDate) = "week/${monday.toEpochDay()}"
@@ -150,6 +152,7 @@ fun AppNav(container: AppContainer) {
                 onWorkout = { nav.navigate(Routes.workout(it)) }, onPlans = { nav.navigate(Routes.PLANS) },
                 onWeek = { nav.navigate(Routes.week(it)) }, onAdjustments = { nav.navigate(Routes.ADJUSTMENTS) },
                 onRaceDay = { nav.navigate(Routes.raceDay(it)) },
+                onZones = { nav.navigate(Routes.ZONES) }, onWatch = { nav.navigate(Routes.WATCH) },
             )
         }
         composable(Routes.WORKOUT, arguments = listOf(navArgument("id") { type = NavType.StringType })) { e ->
@@ -167,6 +170,8 @@ fun AppNav(container: AppContainer) {
         }
         composable(Routes.ADJUSTMENTS) { AdjustmentsScreen(container, state, onBack = back) }
         composable(Routes.EXPORT) { ExportScreen(container, state, onBack = back) }
+        composable(Routes.ZONES) { com.javon.healthdash.ui.screens.ZonesScreen(container, state, onBack = back) }
+        composable(Routes.WATCH) { com.javon.healthdash.ui.screens.WatchWorkoutsScreen(container, state, onBack = back) }
         composable(Routes.STRENGTH, arguments = listOf(navArgument("id") { type = NavType.LongType })) { e ->
             com.javon.healthdash.ui.screens.StrengthScreen(container, state, e.arguments!!.getLong("id"), onBack = back)
         }

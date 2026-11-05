@@ -138,9 +138,17 @@ class HealthConnectSource(private val context: Context, private val dao: AppDao)
                     val dist = runCatching {
                         client.aggregate(AggregateRequest(setOf(DistanceRecord.DISTANCE_TOTAL), TimeRangeFilter.between(it.startTime, it.endTime)))[DistanceRecord.DISTANCE_TOTAL]?.inMeters
                     }.getOrNull()
+                    // HR samples → sustained max and threshold averages (runs and rides only).
+                    val stats = if (sportOf(it.exerciseType).let { s -> s == com.javon.healthdash.calc.Sport.Run || s == com.javon.healthdash.calc.Sport.Ride }) runCatching {
+                        val t0 = it.startTime.toEpochMilli()
+                        val recs = client.readRecords(ReadRecordsRequest(HeartRateRecord::class, TimeRangeFilter.between(it.startTime, it.endTime), pageSize = 5000)).records
+                        com.javon.healthdash.calc.HeartRate.stats(recs.flatMap { r -> r.samples.map { s -> com.javon.healthdash.calc.HrSample((s.time.toEpochMilli() - t0) / 1000.0, s.beatsPerMinute.toInt()) } })
+                    }.getOrNull() else null
                     WorkoutEntity(
                         it.metadata.id, it.startTime.toEpochMilli(), it.endTime.toEpochMilli(), it.exerciseType, it.title, it.metadata.dataOrigin.packageName,
                         avgHr = hr?.get(HeartRateRecord.BPM_AVG)?.toDouble(), maxHr = hr?.get(HeartRateRecord.BPM_MAX)?.toDouble(), distanceM = dist?.takeIf { d -> d > 0 },
+                        elapsedSec = ((it.endTime.toEpochMilli() - it.startTime.toEpochMilli()) / 1000).toInt(),
+                        hrMaxSustained = stats?.sustainedMax, hrAvgLast20 = stats?.avgLast20, hrAvgAfter10 = stats?.avgAfter10,
                     )
                 },
             )

@@ -29,6 +29,10 @@ class Prefs(context: Context) {
         val walkNudge: Boolean,
         val trainingMorning: Boolean,
         val trainingCheckIn: Boolean,
+        /** Usual run time, minutes after midnight — for heat-adjusted pace targets. */
+        val runTimeMin: Int,
+        /** Adds the first-marathon penalty to the projection. */
+        val firstMarathon: Boolean,
         val glucoseSource: String?,
         val claudeModel: String,
     )
@@ -45,6 +49,8 @@ class Prefs(context: Context) {
         walkNudge = sp.getBoolean("walkNudge", true),
         trainingMorning = sp.getBoolean("trainingMorning", true),
         trainingCheckIn = sp.getBoolean("trainingCheckIn", true),
+        runTimeMin = sp.getInt("runTimeMin", 18 * 60),
+        firstMarathon = sp.getBoolean("firstMarathon", true),
         glucoseSource = sp.getString("glucoseSource", null),
         claudeModel = sp.getString("claudeModel", null) ?: BuildConfig.DEFAULT_CLAUDE_MODEL,
     )
@@ -62,6 +68,8 @@ class Prefs(context: Context) {
     fun setWalkNudge(v: Boolean) = update { putBoolean("walkNudge", v) }
     fun setTrainingMorning(v: Boolean) = update { putBoolean("trainingMorning", v) }
     fun setTrainingCheckIn(v: Boolean) = update { putBoolean("trainingCheckIn", v) }
+    fun setRunTimeMin(v: Int) = update { putInt("runTimeMin", v) }
+    fun setFirstMarathon(v: Boolean) = update { putBoolean("firstMarathon", v) }
     fun setGlucoseSource(v: String?) = update { putString("glucoseSource", v) }
     fun setClaudeModel(v: String) = update { putString("claudeModel", v.trim()) }
 
