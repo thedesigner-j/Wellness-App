@@ -125,7 +125,7 @@ fun WatchWorkoutsScreen(container: AppContainer, state: DashboardState, onBack: 
     val bundle = remember(state.workouts, data.planned, weather, plan) { plan?.let { forecastFor(state, it, data.planned, zone, weather, prefs.firstMarathon) } }
     val f = bundle?.forecast
     val workouts = remember(data.planned, weather, bundle, prefs.runTimeMin) {
-        data.planned.filter { e -> plan != null && e.planId == plan.id && e.sport == Sport.Run.name && e.status == "Planned" && LocalDate.ofEpochDay(e.date) in today..today.plusDays(6) }
+        data.planned.filter { e -> plan != null && e.planId == plan.id && e.sport == Sport.Run.name && e.status == "Planned" && LocalDate.ofEpochDay(e.date) in today..today.plusDays(6) && matchedWorkout(e, state, zone) == null }
             .mapNotNull { e ->
                 val d = LocalDate.ofEpochDay(e.date)
                 val t = TargetInputs(plan!!.goalMin?.times(60), f?.projectedSec, f?.lowSec, f?.highSec, bundle?.heart?.lthr?.thresholdPaceSec, forecastAt(weather, d, prefs.runTimeMin, zone))
