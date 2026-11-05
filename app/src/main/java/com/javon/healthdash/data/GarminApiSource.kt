@@ -45,7 +45,7 @@ class GarminApiSource(private val keys: SecureKeys, private val dao: AppDao) {
         if (!force && prev != null && now - prev.lastSyncMs < MIN_INTERVAL_MS) return
         try {
             // Rows synced before elapsed time / climb were stored → refetch the full 90 days once.
-            val backfill = dao.workoutsNow(now - GarminApi.HISTORY_DAYS * 24 * HOUR_MS).any { it.source == GarminApi.SOURCE && it.elapsedSec == null }
+            val backfill = dao.workoutsNow(now - GarminApi.HISTORY_DAYS * 24 * HOUR_MS).any { it.source == GarminApi.SOURCE && it.elapsedSec != ((it.endMs - it.startMs) / 1000).toInt() }
             val (from, to) = GarminApi.syncRange(LocalDate.now(zone), if (backfill) null else prev?.lastRecordMs, zone)
             val acts = fetchAll(key, from, to, zone)
             dao.upsertWorkouts(acts.map { it.toEntity() })
@@ -174,7 +174,8 @@ fun ApiActivity.toEntity() = WorkoutEntity(
     avgHr = avgHr,
     maxHr = maxHr,
     distanceM = distanceM,
-    elapsedSec = elapsedSec ?: durationSec,
+    // Garmin "Total Time" (duration, incl. stops while the timer runs) — not elapsedDuration, which adds paused time.
+    elapsedSec = durationSec,
     ascentM = ascentM,
     descentM = descentM,
 )

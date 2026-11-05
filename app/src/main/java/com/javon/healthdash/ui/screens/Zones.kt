@@ -102,7 +102,7 @@ fun ZonesScreen(container: AppContainer, state: DashboardState, onBack: () -> Un
 
         SectionHeader("Settings")
         RowGroup {
-            ListRow("Usual run time", subtitle = "For heat-adjusted pace targets", trailing = "%d:%02d".format(prefs.runTimeMin / 60, prefs.runTimeMin % 60), chevron = false,
+            ListRow("Usual run time", subtitle = "For heat-adjusted pace targets", chevron = false,
                 trailingContent = { Stepper("%d:%02d".format(prefs.runTimeMin / 60, prefs.runTimeMin % 60), { container.prefs.setRunTimeMin(((prefs.runTimeMin - 30) + 1440) % 1440) }, { container.prefs.setRunTimeMin((prefs.runTimeMin + 30) % 1440) }) })
             ListRow("First marathon", subtitle = "Adds 1.5% to the projection", chevron = false, trailingContent = { Toggle(prefs.firstMarathon, { container.prefs.setFirstMarathon(it) }) })
         }

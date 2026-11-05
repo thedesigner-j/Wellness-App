@@ -303,7 +303,8 @@ fun RaceForecastCard(b: com.javon.healthdash.ui.screens.ForecastBundle, hasGoal:
                     )
                 }
             }
-            MetricTiles(listOf("Projected" to m(f.projectedSec), "Likely range" to "${m(f.lowSec)}–${m(f.highSec)}", "Fitness today" to m(f.fitnessSec)))
+            MetricTiles(listOf("Projected" to m(f.projectedSec), "Fitness today" to m(f.fitnessSec)), columns = 2)
+            Text("Likely range (80%): ${m(f.lowSec)}–${m(f.highSec)}", style = Theme.type.labelL, color = c.textPrimary)
             val e = f.effort
             val date = java.time.Instant.ofEpochMilli(e.startMs).atZone(java.time.ZoneId.systemDefault()).toLocalDate()
             val conditions = listOfNotNull(

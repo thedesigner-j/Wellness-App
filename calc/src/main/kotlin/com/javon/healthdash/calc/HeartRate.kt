@@ -120,22 +120,25 @@ object HeartRate {
     fun latestLthr(acts: List<HrActivity>, maxHr: Int?): Lthr? =
         acts.sortedByDescending { it.date }.firstNotNullOfOrNull { lthrFrom(it, maxHr) }
 
-    /** Z1 < 85%, Z2 85–89%, Z3 90–94%, Z4 95–99%, Z5 ≥ 100% of LTHR. */
+    /** Z1 < 85%, Z2 85–89%, Z3 90–94%, Z4 95–99%, Z5 ≥ 100% of LTHR — contiguous whole-bpm bands (a zone runs up to just under the next boundary). */
     fun zones(lthr: Int): List<HrZoneRow> {
-        fun p(x: Double) = (lthr * x).roundToInt()
+        fun at(x: Double) = kotlin.math.ceil(lthr * x - 1e-9).toInt()
+        val b = listOf(at(0.85), at(0.90), at(0.95), lthr)
         return listOf(
-            HrZoneRow("Z1", null, p(0.85) - 1), HrZoneRow("Z2", p(0.85), p(0.89)), HrZoneRow("Z3", p(0.90), p(0.94)),
-            HrZoneRow("Z4", p(0.95), p(0.99)), HrZoneRow("Z5", lthr, null),
+            HrZoneRow("Z1", null, b[0] - 1), HrZoneRow("Z2", b[0], b[1] - 1), HrZoneRow("Z3", b[1], b[2] - 1),
+            HrZoneRow("Z4", b[2], b[3] - 1), HrZoneRow("Z5", lthr, null),
         )
     }
 
-    /** Easy-run ceiling = top of Z2. */
-    fun easyCeiling(lthr: Int) = (lthr * 0.89).roundToInt()
+    /** Easy-run ceiling = top of Z2 (just under 90% of LTHR). */
+    fun easyCeiling(lthr: Int) = kotlin.math.ceil(lthr * 0.90 - 1e-9).toInt() - 1
 
     /** Easy-run fitness marker: pace normalised to 145 bpm (speed scaled by 145 / avg HR), for runs averaging 140–150. */
     fun paceAt145(distanceMi: Double, elapsedSec: Int, avgHr: Double?): Int? {
         if (avgHr == null || abs(avgHr - EASY_HR) > EASY_HR_BAND || distanceMi <= 0) return null
         val pace = elapsedSec / distanceMi
+        // Implausible running paces (GPS errors, mislabelled rides or walks) are skipped.
+        if (pace < 390 || pace > 960) return null
         return (pace * avgHr / EASY_HR).roundToInt()
     }
 

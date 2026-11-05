@@ -64,16 +64,24 @@ class HeartRateTest {
     @Test fun zonesFromLthr() {
         val z = HeartRate.zones(174)
         assertThat(z.map { it.name }).containsExactly("Z1", "Z2", "Z3", "Z4", "Z5").inOrder()
-        assertThat(z[1].low).isEqualTo(148)   // 85%
-        assertThat(z[1].high).isEqualTo(155)  // 89%
+        assertThat(z[0].high).isEqualTo(147)  // < 85% (147.9)
+        assertThat(z[1].low).isEqualTo(148)
+        assertThat(z[1].high).isEqualTo(156)  // up to just under 90% (156.6)
+        assertThat(z[2].low).isEqualTo(157)
+        assertThat(z[2].high).isEqualTo(165)
+        assertThat(z[3].low).isEqualTo(166)
+        assertThat(z[3].high).isEqualTo(173)
         assertThat(z[4].low).isEqualTo(174)
-        assertThat(HeartRate.easyCeiling(174)).isEqualTo(155)
+        // Contiguous: no gaps between zones.
+        z.zipWithNext().forEach { (a, b) -> assertThat(b.low).isEqualTo(a.high!! + 1) }
+        assertThat(HeartRate.easyCeiling(174)).isEqualTo(156)
     }
 
     @Test fun paceAt145() {
         // 5 mi in 60 min at avg 150 → 12:00/mi × 150/145 = 12:24/mi equivalent... speed scaled → pace × 150/145
         assertThat(HeartRate.paceAt145(5.0, 3600, 150.0)).isEqualTo(745)
         assertThat(HeartRate.paceAt145(3.15, 3132, 125.0)).isNull() // outside 140–150
+        assertThat(HeartRate.paceAt145(5.0, 1700, 145.0)).isNull()  // 5:40/mi at easy HR → bad data
     }
 
     @Test fun testPrompts() {
